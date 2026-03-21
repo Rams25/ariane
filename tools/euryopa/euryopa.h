@@ -297,6 +297,8 @@ extern int gGizmoMode;
 extern bool gGizmoEnabled;
 extern bool gPlaceSnapToObjects;
 extern bool gPlaceSnapToGround;
+extern bool gDragFollowGround;
+extern bool gDragAlignToSurface;
 
 // Undo/Redo
 enum UndoType {
@@ -304,6 +306,21 @@ enum UndoType {
 	UNDO_ROTATE,
 	UNDO_DELETE,
 	UNDO_PASTE,
+	UNDO_TRANSFORM_BATCH,
+};
+
+enum UndoTransformFlags {
+	UNDO_TRANSFORM_POS = 1,
+	UNDO_TRANSFORM_ROT = 2,
+};
+
+struct UndoTransform {
+	ObjectInst *inst;
+	rw::V3d oldPos;
+	rw::V3d newPos;
+	rw::Quat oldRot;
+	rw::Quat newRot;
+	uint8 flags;
 };
 
 struct UndoAction {
@@ -324,12 +341,16 @@ struct UndoAction {
 	// For PASTE: list of pasted instances (to delete on undo)
 	ObjectInst *pastedInsts[64];
 	int numPasted;
+	// For batch transform actions (snap to ground, etc.)
+	UndoTransform transforms[64];
+	int numTransforms;
 };
 
 void UndoRecordMove(ObjectInst *inst, rw::V3d oldPos, ObjectInst *lodInst, rw::V3d lodOldPos);
 void UndoRecordRotate(ObjectInst *inst, rw::Quat oldRot);
 void UndoRecordDelete(ObjectInst **insts, int num);
 void UndoRecordPaste(ObjectInst **insts, int num);
+void UndoRecordTransformBatch(UndoTransform *transforms, int num);
 void Undo(void);
 void Redo(void);
 
@@ -357,6 +378,7 @@ void SpawnExitPlaceMode(void);
 int GetSpawnObjectId(void);
 void SetSpawnObjectId(int id);
 int GetLodForObject(int id);
+int SnapSelectedToGround(bool alignRotation);
 
 // Object Browser categories & favourites
 void InitObjectCategories(void);

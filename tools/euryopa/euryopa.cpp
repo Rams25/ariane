@@ -9,6 +9,8 @@ int gGizmoMode = GIZMO_TRANSLATE;
 bool gGizmoEnabled = true;
 bool gPlaceSnapToObjects = true;
 bool gPlaceSnapToGround = true;
+bool gDragFollowGround = false;
+bool gDragAlignToSurface = false;
 
 int gameTxdSlot;
 
@@ -447,6 +449,39 @@ IntersectRayBox(const Ray &ray, const CBox &box, float *t)
 	return true;
 }
 
+static rw::V3d
+GetBoxHitNormal(const Ray &ray, const CBox &box, float t)
+{
+	const float eps = 0.01f;
+	rw::V3d hit = add(ray.start, scale(ray.dir, t));
+	rw::V3d normal = { 0.0f, 0.0f, 0.0f };
+
+	if(fabs(hit.x - box.min.x) < eps) normal.x = -1.0f;
+	else if(fabs(hit.x - box.max.x) < eps) normal.x = 1.0f;
+	else if(fabs(hit.y - box.min.y) < eps) normal.y = -1.0f;
+	else if(fabs(hit.y - box.max.y) < eps) normal.y = 1.0f;
+	else if(fabs(hit.z - box.min.z) < eps) normal.z = -1.0f;
+	else if(fabs(hit.z - box.max.z) < eps) normal.z = 1.0f;
+
+	if(normal.x == 0.0f && normal.y == 0.0f && normal.z == 0.0f){
+		float dxMin = fabs(hit.x - box.min.x);
+		float dxMax = fabs(hit.x - box.max.x);
+		float dyMin = fabs(hit.y - box.min.y);
+		float dyMax = fabs(hit.y - box.max.y);
+		float dzMin = fabs(hit.z - box.min.z);
+		float dzMax = fabs(hit.z - box.max.z);
+		float best = dxMin;
+		normal.x = -1.0f;
+		if(dxMax < best){ best = dxMax; normal.x = 1.0f; normal.y = 0.0f; normal.z = 0.0f; }
+		if(dyMin < best){ best = dyMin; normal.x = 0.0f; normal.y = -1.0f; normal.z = 0.0f; }
+		if(dyMax < best){ best = dyMax; normal.x = 0.0f; normal.y = 1.0f; normal.z = 0.0f; }
+		if(dzMin < best){ best = dzMin; normal.x = 0.0f; normal.y = 0.0f; normal.z = -1.0f; }
+		if(dzMax < best){ normal.x = 0.0f; normal.y = 0.0f; normal.z = 1.0f; }
+	}
+
+	return normal;
+}
+
 static bool
 IntersectRayTriangle(const Ray &ray, rw::V3d a, rw::V3d b, rw::V3d c, float *t)
 {
@@ -478,7 +513,7 @@ IntersectRayTriangle(const Ray &ray, rw::V3d a, rw::V3d b, rw::V3d c, float *t)
 }
 
 static bool
-IntersectRayColModel(const Ray &worldRay, ObjectInst *inst, rw::V3d *hitPos)
+IntersectRayColModelDetailed(const Ray &worldRay, ObjectInst *inst, rw::V3d *hitPos, rw::V3d *hitNormal)
 {
 	ObjectDef *obj = GetObjectDef(inst->m_objectId);
 	if(obj == nil || obj->m_colModel == nil)
@@ -502,6 +537,7 @@ IntersectRayColModel(const Ray &worldRay, ObjectInst *inst, rw::V3d *hitPos)
 
 	float bestT = 1.0e30f;
 	bool found = false;
+	rw::V3d bestNormal = { 0.0f, 0.0f, 1.0f };
 
 	for(int i = 0; i < col->numTriangles; i++){
 		CColTriangle *tri = &col->triangles[i];
@@ -511,6 +547,7 @@ IntersectRayColModel(const Ray &worldRay, ObjectInst *inst, rw::V3d *hitPos)
 		float t;
 		if(IntersectRayTriangle(ray, a, b, c, &t) && t < bestT){
 			bestT = t;
+			bestNormal = normalize(cross(sub(b, a), sub(c, a)));
 			found = true;
 		}
 	}
@@ -519,6 +556,7 @@ IntersectRayColModel(const Ray &worldRay, ObjectInst *inst, rw::V3d *hitPos)
 		float t;
 		if(IntersectRayBox(ray, col->boxes[i].box, &t) && t < bestT){
 			bestT = t;
+			bestNormal = GetBoxHitNormal(ray, col->boxes[i].box, t);
 			found = true;
 		}
 	}
@@ -526,7 +564,9 @@ IntersectRayColModel(const Ray &worldRay, ObjectInst *inst, rw::V3d *hitPos)
 	for(int i = 0; i < col->numSpheres; i++){
 		float t;
 		if(IntersectRaySphere(ray, col->spheres[i].sph, &t) && t < bestT){
+			rw::V3d localHit = add(ray.start, scale(ray.dir, t));
 			bestT = t;
+			bestNormal = normalize(sub(localHit, col->spheres[i].sph.center));
 			found = true;
 		}
 	}
@@ -535,7 +575,18 @@ IntersectRayColModel(const Ray &worldRay, ObjectInst *inst, rw::V3d *hitPos)
 		return false;
 
 	*hitPos = add(worldRay.start, scale(worldRay.dir, bestT));
+	if(hitNormal){
+		*hitNormal = bestNormal;
+		rw::V3d::transformVectors(hitNormal, hitNormal, 1, &inst->m_matrix);
+		*hitNormal = normalize(*hitNormal);
+	}
 	return true;
+}
+
+static bool
+IntersectRayColModel(const Ray &worldRay, ObjectInst *inst, rw::V3d *hitPos)
+{
+	return IntersectRayColModelDetailed(worldRay, inst, hitPos, nil);
 }
 
 static bool
@@ -558,29 +609,48 @@ PointInsideInstBounds(ObjectInst *inst, float x, float y)
 }
 
 static void
-FindGroundHitInList(CPtrList *list, const Ray &ray, float x, float y, rw::V3d *bestHit, float *bestT)
+FindGroundHitInList(CPtrList *list, const Ray &ray, float x, float y, rw::V3d *bestHit, rw::V3d *bestNormal, float *bestT, bool ignoreSelection)
 {
 	for(CPtrNode *p = list->first; p; p = p->next){
 		ObjectInst *inst = (ObjectInst*)p->item;
+		if(ignoreSelection){
+			if(inst->m_selected)
+				continue;
+			if(inst->m_lod && inst->m_lod->m_selected)
+				continue;
+			bool linkedToSelection = false;
+			for(CPtrNode *sel = selection.first; sel; sel = sel->next){
+				ObjectInst *selectedInst = (ObjectInst*)sel->item;
+				if(selectedInst->m_lod == inst){
+					linkedToSelection = true;
+					break;
+				}
+			}
+			if(linkedToSelection)
+				continue;
+		}
 		if(!CanSnapToInst(inst))
 			continue;
 		if(!PointInsideInstBounds(inst, x, y))
 			continue;
 
 		rw::V3d hitPos;
-		if(!IntersectRayColModel(ray, inst, &hitPos))
+		rw::V3d hitNormal;
+		if(!IntersectRayColModelDetailed(ray, inst, &hitPos, &hitNormal))
 			continue;
 
 		float t = dot(sub(hitPos, ray.start), ray.dir);
 		if(t >= 0.0f && t < *bestT){
 			*bestT = t;
 			*bestHit = hitPos;
+			if(bestNormal)
+				*bestNormal = hitNormal;
 		}
 	}
 }
 
 static bool
-GetGroundPlacementSurface(rw::V3d pos, rw::V3d *hitPos)
+GetGroundPlacementSurface(rw::V3d pos, rw::V3d *hitPos, rw::V3d *hitNormal = nil, bool ignoreSelection = false)
 {
 	Ray ray;
 	ray.start = pos;
@@ -590,22 +660,29 @@ GetGroundPlacementSurface(rw::V3d pos, rw::V3d *hitPos)
 	float bestT = 1.0e30f;
 	bool found = false;
 	rw::V3d bestHit = pos;
+	rw::V3d bestNormal = { 0.0f, 0.0f, 1.0f };
 
 	if(pos.x >= worldBounds.left && pos.x < worldBounds.right &&
 	   pos.y >= worldBounds.bottom && pos.y < worldBounds.top){
 		Sector *s = GetSector(GetSectorIndexX(pos.x), GetSectorIndexY(pos.y));
-		FindGroundHitInList(&s->buildings, ray, pos.x, pos.y, &bestHit, &bestT);
-		FindGroundHitInList(&s->buildings_overlap, ray, pos.x, pos.y, &bestHit, &bestT);
-		FindGroundHitInList(&s->bigbuildings, ray, pos.x, pos.y, &bestHit, &bestT);
-		FindGroundHitInList(&s->bigbuildings_overlap, ray, pos.x, pos.y, &bestHit, &bestT);
+		FindGroundHitInList(&s->buildings, ray, pos.x, pos.y, &bestHit, &bestNormal, &bestT, ignoreSelection);
+		FindGroundHitInList(&s->buildings_overlap, ray, pos.x, pos.y, &bestHit, &bestNormal, &bestT, ignoreSelection);
+		FindGroundHitInList(&s->bigbuildings, ray, pos.x, pos.y, &bestHit, &bestNormal, &bestT, ignoreSelection);
+		FindGroundHitInList(&s->bigbuildings_overlap, ray, pos.x, pos.y, &bestHit, &bestNormal, &bestT, ignoreSelection);
 	}
 
-	FindGroundHitInList(&outOfBoundsSector.buildings, ray, pos.x, pos.y, &bestHit, &bestT);
-	FindGroundHitInList(&outOfBoundsSector.bigbuildings, ray, pos.x, pos.y, &bestHit, &bestT);
+	FindGroundHitInList(&outOfBoundsSector.buildings, ray, pos.x, pos.y, &bestHit, &bestNormal, &bestT, ignoreSelection);
+	FindGroundHitInList(&outOfBoundsSector.bigbuildings, ray, pos.x, pos.y, &bestHit, &bestNormal, &bestT, ignoreSelection);
 
 	found = bestT < 1.0e30f;
-	if(found)
+	if(found){
 		*hitPos = bestHit;
+		if(hitNormal){
+			if(bestNormal.z < 0.0f)
+				bestNormal = scale(bestNormal, -1.0f);
+			*hitNormal = bestNormal;
+		}
+	}
 	return found;
 }
 
@@ -616,6 +693,290 @@ GetPlacementBaseOffset(int objectId)
 	if(obj == nil || obj->m_colModel == nil)
 		return 0.0f;
 	return -obj->m_colModel->boundingBox.min.z;
+}
+
+static void updateRwFrame(ObjectInst *inst);
+
+static rw::Quat
+QuatFromMatrix(const rw::Matrix &matrix)
+{
+	rw::Quat q;
+	float trace = matrix.right.x + matrix.up.y + matrix.at.z;
+	if(trace > 0.0f){
+		float s = sqrtf(trace + 1.0f) * 2.0f;
+		q.w = 0.25f * s;
+		q.x = (matrix.up.z - matrix.at.y) / s;
+		q.y = (matrix.at.x - matrix.right.z) / s;
+		q.z = (matrix.right.y - matrix.up.x) / s;
+	}else if(matrix.right.x > matrix.up.y && matrix.right.x > matrix.at.z){
+		float s = sqrtf(1.0f + matrix.right.x - matrix.up.y - matrix.at.z) * 2.0f;
+		q.w = (matrix.up.z - matrix.at.y) / s;
+		q.x = 0.25f * s;
+		q.y = (matrix.up.x + matrix.right.y) / s;
+		q.z = (matrix.at.x + matrix.right.z) / s;
+	}else if(matrix.up.y > matrix.at.z){
+		float s = sqrtf(1.0f + matrix.up.y - matrix.right.x - matrix.at.z) * 2.0f;
+		q.w = (matrix.at.x - matrix.right.z) / s;
+		q.x = (matrix.up.x + matrix.right.y) / s;
+		q.y = 0.25f * s;
+		q.z = (matrix.at.y + matrix.up.z) / s;
+	}else{
+		float s = sqrtf(1.0f + matrix.at.z - matrix.right.x - matrix.up.y) * 2.0f;
+		q.w = (matrix.right.y - matrix.up.x) / s;
+		q.x = (matrix.at.x + matrix.right.z) / s;
+		q.y = (matrix.at.y + matrix.up.z) / s;
+		q.z = 0.25f * s;
+	}
+	q.x = -q.x;
+	q.y = -q.y;
+	q.z = -q.z;
+	return q;
+}
+
+static rw::V3d
+NormalizeOr(const rw::V3d &v, const rw::V3d &fallback)
+{
+	float len = length(v);
+	if(len < 0.0001f)
+		return fallback;
+	return scale(v, 1.0f / len);
+}
+
+static float
+GetMinZOffsetForRotation(ObjectInst *inst, const rw::Quat &rotation)
+{
+	ObjectDef *obj = GetObjectDef(inst->m_objectId);
+	if(obj == nil || obj->m_colModel == nil)
+		return 0.0f;
+
+	CBox box = obj->m_colModel->boundingBox;
+	rw::Matrix rotMat;
+	rotMat.rotate(conj(rotation), rw::COMBINEREPLACE);
+	rotMat.pos.x = 0.0f;
+	rotMat.pos.y = 0.0f;
+	rotMat.pos.z = 0.0f;
+
+	rw::V3d corners[8] = {
+		{ box.min.x, box.min.y, box.min.z },
+		{ box.min.x, box.min.y, box.max.z },
+		{ box.min.x, box.max.y, box.min.z },
+		{ box.min.x, box.max.y, box.max.z },
+		{ box.max.x, box.min.y, box.min.z },
+		{ box.max.x, box.min.y, box.max.z },
+		{ box.max.x, box.max.y, box.min.z },
+		{ box.max.x, box.max.y, box.max.z },
+	};
+
+	rw::V3d::transformPoints(corners, corners, 8, &rotMat);
+	float minZ = corners[0].z;
+	for(int i = 1; i < 8; i++)
+		minZ = min(minZ, corners[i].z);
+	return minZ;
+}
+
+static rw::Quat
+BuildGroundAlignedRotationFromRotation(const rw::Quat &sourceRotation, rw::V3d groundNormal)
+{
+	rw::V3d fallbackUp = { 0.0f, 0.0f, 1.0f };
+	rw::V3d fallbackRight = { 1.0f, 0.0f, 0.0f };
+	rw::V3d fallbackForward = { 0.0f, 1.0f, 0.0f };
+	rw::Matrix sourceMatrix;
+	sourceMatrix.rotate(conj(sourceRotation), rw::COMBINEREPLACE);
+
+	groundNormal = NormalizeOr(groundNormal, fallbackUp);
+	rw::V3d forward = sourceMatrix.at;
+	forward = sub(forward, scale(groundNormal, dot(forward, groundNormal)));
+	if(length(forward) < 0.0001f){
+		rw::V3d right = sourceMatrix.right;
+		right = sub(right, scale(groundNormal, dot(right, groundNormal)));
+		right = NormalizeOr(right, fallbackRight);
+		forward = cross(groundNormal, right);
+	}
+	forward = NormalizeOr(forward, fallbackForward);
+	rw::V3d right = NormalizeOr(cross(forward, groundNormal), fallbackRight);
+	forward = NormalizeOr(cross(groundNormal, right), forward);
+
+	rw::Matrix matrix;
+	matrix.right = right;
+	matrix.up = groundNormal;
+	matrix.at = forward;
+	matrix.pos.x = 0.0f;
+	matrix.pos.y = 0.0f;
+	matrix.pos.z = 0.0f;
+	return QuatFromMatrix(matrix);
+}
+
+static rw::Quat
+BuildGroundAlignedRotation(ObjectInst *inst, rw::V3d groundNormal)
+{
+	return BuildGroundAlignedRotationFromRotation(inst->m_rotation, groundNormal);
+}
+
+static UndoTransform*
+FindOrAddTransform(UndoTransform *transforms, int *numTransforms, ObjectInst *inst)
+{
+	for(int i = 0; i < *numTransforms; i++)
+		if(transforms[i].inst == inst)
+			return &transforms[i];
+	if(*numTransforms >= 64)
+		return nil;
+	UndoTransform *t = &transforms[(*numTransforms)++];
+	memset(t, 0, sizeof(*t));
+	t->inst = inst;
+	t->oldPos = inst->m_translation;
+	t->newPos = inst->m_translation;
+	t->oldRot = inst->m_rotation;
+	t->newRot = inst->m_rotation;
+	return t;
+}
+
+static bool
+HasSelectedHdChild(ObjectInst *lodInst)
+{
+	if(lodInst == nil)
+		return false;
+	for(CPtrNode *p = selection.first; p; p = p->next){
+		ObjectInst *inst = (ObjectInst*)p->item;
+		if(!inst->m_isDeleted && inst->m_lod == lodInst)
+			return true;
+	}
+	return false;
+}
+
+static int
+CountSelectedHdChildren(ObjectInst *lodInst)
+{
+	int count = 0;
+	if(lodInst == nil)
+		return 0;
+	for(CPtrNode *p = selection.first; p; p = p->next){
+		ObjectInst *inst = (ObjectInst*)p->item;
+		if(!inst->m_isDeleted && inst->m_lod == lodInst)
+			count++;
+	}
+	return count;
+}
+
+static void
+ApplyTransform(UndoTransform &t)
+{
+	ObjectInst *inst = t.inst;
+	bool refreshSectors = (t.flags & (UNDO_TRANSFORM_POS | UNDO_TRANSFORM_ROT)) != 0;
+	if(refreshSectors)
+		RemoveInstFromSectors(inst);
+	if(t.flags & UNDO_TRANSFORM_POS)
+		inst->m_translation = t.newPos;
+	if(t.flags & UNDO_TRANSFORM_ROT)
+		inst->m_rotation = t.newRot;
+	inst->m_isDirty = true;
+	inst->UpdateMatrix();
+	updateRwFrame(inst);
+	if(refreshSectors)
+		InsertInstIntoSectors(inst);
+}
+
+int
+SnapSelectedToGround(bool alignRotation)
+{
+	ObjectInst *targets[64];
+	int numTargets = 0;
+	int skipped = 0;
+
+	for(CPtrNode *p = selection.first; p; p = p->next){
+		ObjectInst *inst = (ObjectInst*)p->item;
+		if(inst->m_isDeleted)
+			continue;
+		if(inst->m_lod && CountSelectedHdChildren(inst->m_lod) > 1){
+			skipped++;
+			continue;
+		}
+		if(HasSelectedHdChild(inst)){
+			skipped++;
+			continue;
+		}
+		if(numTargets < 64)
+			targets[numTargets++] = inst;
+	}
+
+	if(numTargets == 0){
+		if(skipped > 0)
+			Toast(TOAST_SELECTION, "Ground snap skipped linked multi-selection");
+		return 0;
+	}
+
+	UndoTransform transforms[64];
+	int numTransforms = 0;
+	int snapped = 0;
+
+	for(int i = 0; i < numTargets; i++){
+		ObjectInst *inst = targets[i];
+		rw::V3d hitPos, hitNormal;
+		if(!GetGroundPlacementSurface(inst->m_translation, &hitPos, &hitNormal, true)){
+			skipped++;
+			continue;
+		}
+
+		rw::Quat newRot = inst->m_rotation;
+		if(alignRotation)
+			newRot = BuildGroundAlignedRotation(inst, hitNormal);
+
+		rw::V3d newPos = inst->m_translation;
+		newPos.z = hitPos.z - GetMinZOffsetForRotation(inst, newRot);
+		rw::V3d delta = sub(newPos, inst->m_translation);
+
+		if(length(delta) < 0.0001f && (!alignRotation || memcmp(&newRot, &inst->m_rotation, sizeof(newRot)) == 0))
+			continue;
+
+		UndoTransform *self = FindOrAddTransform(transforms, &numTransforms, inst);
+		if(self == nil)
+			break;
+		self->flags |= UNDO_TRANSFORM_POS;
+		self->newPos = newPos;
+		if(alignRotation){
+			self->flags |= UNDO_TRANSFORM_ROT;
+			self->newRot = newRot;
+		}
+
+		if(inst->m_lod && !inst->m_lod->m_isDeleted){
+			UndoTransform *lod = FindOrAddTransform(transforms, &numTransforms, inst->m_lod);
+			if(lod){
+				lod->flags |= UNDO_TRANSFORM_POS;
+				lod->newPos = add(inst->m_lod->m_translation, delta);
+			}
+		}else{
+			for(CPtrNode *p = instances.first; p; p = p->next){
+				ObjectInst *child = (ObjectInst*)p->item;
+				if(child != inst && child->m_lod == inst && !child->m_isDeleted){
+					UndoTransform *childTransform = FindOrAddTransform(transforms, &numTransforms, child);
+					if(childTransform){
+						childTransform->flags |= UNDO_TRANSFORM_POS;
+						childTransform->newPos = add(child->m_translation, delta);
+					}
+				}
+			}
+		}
+		snapped++;
+	}
+
+	if(numTransforms == 0){
+		if(skipped > 0)
+			Toast(TOAST_SELECTION, "Ground snap skipped %d instance(s)", skipped);
+		return 0;
+	}
+
+	for(int i = 0; i < numTransforms; i++)
+		ApplyTransform(transforms[i]);
+	UndoRecordTransformBatch(transforms, numTransforms);
+
+	if(snapped > 0){
+		if(alignRotation)
+			Toast(TOAST_SELECTION, "Aligned %d instance(s) to ground", snapped);
+		else
+			Toast(TOAST_SELECTION, "Snapped %d instance(s) to ground", snapped);
+	}
+	if(skipped > 0)
+		Toast(TOAST_SELECTION, "Skipped %d linked/conflicting instance(s)", skipped);
+	return snapped;
 }
 
 static rw::V3d
@@ -855,6 +1216,10 @@ dogizmo(void)
 	static rw::Quat dragStartRot;
 	static rw::V3d dragStartLodPos;
 	static ObjectInst *dragLodInst;
+	static bool dragStartFollowGround;
+	static bool dragStartAlignToSurface;
+	static float dragGroundOffset;
+	static rw::Quat dragGroundBaseRot;
 
 	rw::Camera *cam;
 	rw::RawMatrix gizobj;
@@ -881,13 +1246,53 @@ dogizmo(void)
 		dragStartPos = inst->m_translation;
 		dragStartRot = inst->m_rotation;
 		dragLodInst = inst->m_lod;
+		dragStartFollowGround = gGizmoMode == GIZMO_TRANSLATE && gDragFollowGround;
+		dragStartAlignToSurface = dragStartFollowGround && gDragAlignToSurface;
+		dragGroundBaseRot = inst->m_rotation;
+		dragGroundOffset = 0.0f;
 		if(dragLodInst)
 			dragStartLodPos = dragLodInst->m_translation;
+		if(dragStartFollowGround){
+			rw::V3d hitPos, hitNormal;
+			if(GetGroundPlacementSurface(inst->m_translation, &hitPos, &hitNormal, true))
+				dragGroundOffset = inst->m_translation.z - (hitPos.z - GetMinZOffsetForRotation(inst, inst->m_rotation));
+		}
 	}
 	// Record undo when drag ends
 	if(!isUsing && wasDragging){
-		if(gGizmoMode == GIZMO_TRANSLATE)
-			UndoRecordMove(inst, dragStartPos, dragLodInst, dragStartLodPos);
+		if(gGizmoMode == GIZMO_TRANSLATE){
+			if(dragStartAlignToSurface){
+				UndoTransform transforms[2];
+				int numTransforms = 0;
+
+				if(length(sub(inst->m_translation, dragStartPos)) >= 0.0001f ||
+				   memcmp(&inst->m_rotation, &dragStartRot, sizeof(inst->m_rotation)) != 0){
+					memset(&transforms[numTransforms], 0, sizeof(transforms[numTransforms]));
+					transforms[numTransforms].inst = inst;
+					transforms[numTransforms].oldPos = dragStartPos;
+					transforms[numTransforms].newPos = inst->m_translation;
+					transforms[numTransforms].oldRot = dragStartRot;
+					transforms[numTransforms].newRot = inst->m_rotation;
+					transforms[numTransforms].flags = UNDO_TRANSFORM_POS | UNDO_TRANSFORM_ROT;
+					numTransforms++;
+				}
+
+				if(dragLodInst && length(sub(dragLodInst->m_translation, dragStartLodPos)) >= 0.0001f){
+					memset(&transforms[numTransforms], 0, sizeof(transforms[numTransforms]));
+					transforms[numTransforms].inst = dragLodInst;
+					transforms[numTransforms].oldPos = dragStartLodPos;
+					transforms[numTransforms].newPos = dragLodInst->m_translation;
+					transforms[numTransforms].oldRot = dragLodInst->m_rotation;
+					transforms[numTransforms].newRot = dragLodInst->m_rotation;
+					transforms[numTransforms].flags = UNDO_TRANSFORM_POS;
+					numTransforms++;
+				}
+
+				if(numTransforms > 0)
+					UndoRecordTransformBatch(transforms, numTransforms);
+			}else
+				UndoRecordMove(inst, dragStartPos, dragLodInst, dragStartLodPos);
+		}
 		else if(gGizmoMode == GIZMO_ROTATE)
 			UndoRecordRotate(inst, dragStartRot);
 	}
@@ -901,10 +1306,22 @@ dogizmo(void)
 		newPos.z = gizobj.pos.z;
 
 		if(gGizmoMode == GIZMO_TRANSLATE){
+			rw::Quat newRot = inst->m_rotation;
+			if(dragStartFollowGround){
+				rw::V3d groundHit, groundNormal;
+				if(GetGroundPlacementSurface(newPos, &groundHit, &groundNormal, true)){
+					if(dragStartAlignToSurface)
+						newRot = BuildGroundAlignedRotationFromRotation(dragGroundBaseRot, groundNormal);
+					newPos.z = groundHit.z - GetMinZOffsetForRotation(inst, newRot) + dragGroundOffset;
+				}
+			}
+
 			// Compute delta
 			rw::V3d delta = sub(newPos, inst->m_translation);
 
 			inst->m_translation = newPos;
+			if(dragStartAlignToSurface)
+				inst->m_rotation = newRot;
 			inst->m_isDirty = true;
 			inst->UpdateMatrix();
 			updateRwFrame(inst);
@@ -944,39 +1361,7 @@ dogizmo(void)
 			// Extract quaternion from the rotation matrix
 			// Matrix was built with conj(m_rotation), so we extract
 			// the quat from the matrix and conjugate it (negate x,y,z)
-			rw::Quat q;
-			rw::Matrix *m = &inst->m_matrix;
-			float trace = m->right.x + m->up.y + m->at.z;
-			if(trace > 0.0f){
-				float s = sqrtf(trace + 1.0f) * 2.0f;
-				q.w = 0.25f * s;
-				q.x = (m->up.z - m->at.y) / s;
-				q.y = (m->at.x - m->right.z) / s;
-				q.z = (m->right.y - m->up.x) / s;
-			}else if(m->right.x > m->up.y && m->right.x > m->at.z){
-				float s = sqrtf(1.0f + m->right.x - m->up.y - m->at.z) * 2.0f;
-				q.w = (m->up.z - m->at.y) / s;
-				q.x = 0.25f * s;
-				q.y = (m->up.x + m->right.y) / s;
-				q.z = (m->at.x + m->right.z) / s;
-			}else if(m->up.y > m->at.z){
-				float s = sqrtf(1.0f + m->up.y - m->right.x - m->at.z) * 2.0f;
-				q.w = (m->at.x - m->right.z) / s;
-				q.x = (m->up.x + m->right.y) / s;
-				q.y = 0.25f * s;
-				q.z = (m->at.y + m->up.z) / s;
-			}else{
-				float s = sqrtf(1.0f + m->at.z - m->right.x - m->up.y) * 2.0f;
-				q.w = (m->right.y - m->up.x) / s;
-				q.x = (m->at.x + m->right.z) / s;
-				q.y = (m->at.y + m->up.z) / s;
-				q.z = 0.25f * s;
-			}
-			// Conjugate: matrix was built from conj(rotation)
-			inst->m_rotation.x = -q.x;
-			inst->m_rotation.y = -q.y;
-			inst->m_rotation.z = -q.z;
-			inst->m_rotation.w = q.w;
+			inst->m_rotation = QuatFromMatrix(inst->m_matrix);
 			inst->m_isDirty = true;
 		}
 

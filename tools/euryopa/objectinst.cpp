@@ -732,6 +732,29 @@ updateRwFrameForInst(ObjectInst *inst)
 }
 
 static void
+applyUndoTransform(const UndoTransform &t, bool useNewState)
+{
+	ObjectInst *inst = t.inst;
+	if(inst == nil)
+		return;
+
+	bool refreshSectors = (t.flags & (UNDO_TRANSFORM_POS | UNDO_TRANSFORM_ROT)) != 0;
+	if(refreshSectors)
+		RemoveInstFromSectors(inst);
+	if(t.flags & UNDO_TRANSFORM_POS)
+		inst->m_translation = useNewState ? t.newPos : t.oldPos;
+	if(t.flags & UNDO_TRANSFORM_ROT)
+		inst->m_rotation = useNewState ? t.newRot : t.oldRot;
+
+	inst->m_isDirty = true;
+	inst->UpdateMatrix();
+	updateRwFrameForInst(inst);
+
+	if(refreshSectors)
+		InsertInstIntoSectors(inst);
+}
+
+static void
 pushUndo(UndoAction *a)
 {
 	// If we're not at the top, discard redo history
@@ -800,6 +823,21 @@ UndoRecordPaste(ObjectInst **insts, int num)
 }
 
 void
+UndoRecordTransformBatch(UndoTransform *transforms, int num)
+{
+	if(num <= 0)
+		return;
+
+	UndoAction a;
+	memset(&a, 0, sizeof(a));
+	a.type = UNDO_TRANSFORM_BATCH;
+	a.numTransforms = num > 64 ? 64 : num;
+	for(int i = 0; i < a.numTransforms; i++)
+		a.transforms[i] = transforms[i];
+	pushUndo(&a);
+}
+
+void
 Undo(void)
 {
 	if(undoPos <= 0) return;
@@ -831,6 +869,10 @@ Undo(void)
 			a->pastedInsts[i]->Deselect();
 			a->pastedInsts[i]->Delete();
 		}
+		break;
+	case UNDO_TRANSFORM_BATCH:
+		for(int i = 0; i < a->numTransforms; i++)
+			applyUndoTransform(a->transforms[i], false);
 		break;
 	}
 }
@@ -867,6 +909,10 @@ Redo(void)
 			a->pastedInsts[i]->Undelete();
 			a->pastedInsts[i]->Select();
 		}
+		break;
+	case UNDO_TRANSFORM_BATCH:
+		for(int i = 0; i < a->numTransforms; i++)
+			applyUndoTransform(a->transforms[i], true);
 		break;
 	}
 }

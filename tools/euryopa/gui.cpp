@@ -334,6 +334,8 @@ uiHelpWindow(void)
 		"Deleting also removes linked LOD instances.");
 	ImGui::BulletText("Ctrl+C: Copy selected building(s)\n"
 		"Ctrl+V: Paste (offset +10 on X), with LOD linking");
+	ImGui::BulletText("G: snap selection to ground\n"
+		"Shift+G: align selection to ground normal and preserve facing.");
 	ImGui::BulletText("Ctrl+S: Save all modified IPL files\n"
 		"Deleted instances are commented out with #.");
 	ImGui::BulletText("B: Toggle Object Browser\n"
@@ -1381,6 +1383,14 @@ uiInstWindow(void)
 		ImGui::SameLine();
 		if(ImGui::RadioButton("Rotate (Q)", gGizmoMode == GIZMO_ROTATE))
 			gGizmoMode = GIZMO_ROTATE;
+		if(gGizmoMode == GIZMO_TRANSLATE){
+			ImGui::Checkbox("Ground Follow While Dragging", &gDragFollowGround);
+			ImGui::BeginDisabled(!gDragFollowGround);
+			ImGui::Indent();
+			ImGui::Checkbox("Align To Surface While Dragging", &gDragAlignToSurface);
+			ImGui::Unindent();
+			ImGui::EndDisabled();
+		}
 	}
 	ImGui::Separator();
 
@@ -1784,6 +1794,9 @@ gui(void)
 		saveAllIpls();
 		Toast(TOAST_SAVE, "Saved all IPL files");
 	}
+
+	if(CPad::IsKeyJustDown('G'))
+		SnapSelectedToGround(CPad::IsShiftDown());
 
 	if(CPad::IsKeyJustDown('T')) showTimeWeatherWindow ^= 1;
 	if(showTimeWeatherWindow){
