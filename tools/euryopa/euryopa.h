@@ -295,6 +295,8 @@ enum GizmoMode {
 };
 extern int gGizmoMode;
 extern bool gGizmoEnabled;
+extern bool gPlaceSnapToObjects;
+extern bool gPlaceSnapToGround;
 
 // Undo/Redo
 enum UndoType {

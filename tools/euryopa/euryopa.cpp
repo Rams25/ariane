@@ -7,6 +7,8 @@ Params params;
 
 int gGizmoMode = GIZMO_TRANSLATE;
 bool gGizmoEnabled = true;
+bool gPlaceSnapToObjects = true;
+bool gPlaceSnapToGround = true;
 
 int gameTxdSlot;
 
@@ -379,25 +381,285 @@ pick(void)
 }
 
 static rw::V3d
+GetColVertex(CColModel *col, int idx)
+{
+	if(col->flags & 0x80)
+		return col->compVertices[idx].Uncompress();
+	return col->vertices[idx];
+}
+
+static bool
+IntersectRaySphere(const Ray &ray, const CSphere &sphere, float *t)
+{
+	rw::V3d diff = sub(ray.start, sphere.center);
+	float a = dot(ray.dir, ray.dir);
+	float b = 2.0f * dot(ray.dir, diff);
+	float c = dot(diff, diff) - sq(sphere.radius);
+	float discr = sq(b) - 4.0f*a*c;
+	if(discr < 0.0f)
+		return false;
+
+	float root = sqrt(discr);
+	float inv2a = 0.5f / a;
+	float t0 = (-b - root) * inv2a;
+	float t1 = (-b + root) * inv2a;
+	float hit = t0 >= 0.0f ? t0 : t1;
+	if(hit < 0.0f)
+		return false;
+
+	*t = hit;
+	return true;
+}
+
+static bool
+IntersectRayBox(const Ray &ray, const CBox &box, float *t)
+{
+	float tmin = 0.0f;
+	float tmax = 1.0e30f;
+	float rayStart[3] = { ray.start.x, ray.start.y, ray.start.z };
+	float rayDir[3] = { ray.dir.x, ray.dir.y, ray.dir.z };
+	float bmin[3] = { box.min.x, box.min.y, box.min.z };
+	float bmax[3] = { box.max.x, box.max.y, box.max.z };
+
+	for(int axis = 0; axis < 3; axis++){
+		if(fabs(rayDir[axis]) < 0.0001f){
+			if(rayStart[axis] < bmin[axis] || rayStart[axis] > bmax[axis])
+				return false;
+			continue;
+		}
+
+		float invDir = 1.0f / rayDir[axis];
+		float t0 = (bmin[axis] - rayStart[axis]) * invDir;
+		float t1 = (bmax[axis] - rayStart[axis]) * invDir;
+		if(t0 > t1){
+			float tmp = t0;
+			t0 = t1;
+			t1 = tmp;
+		}
+
+		tmin = max(tmin, t0);
+		tmax = min(tmax, t1);
+		if(tmin > tmax)
+			return false;
+	}
+
+	*t = tmin;
+	return true;
+}
+
+static bool
+IntersectRayTriangle(const Ray &ray, rw::V3d a, rw::V3d b, rw::V3d c, float *t)
+{
+	const float eps = 0.0001f;
+	rw::V3d edge1 = sub(b, a);
+	rw::V3d edge2 = sub(c, a);
+	rw::V3d pvec = cross(ray.dir, edge2);
+	float det = dot(edge1, pvec);
+	if(fabs(det) < eps)
+		return false;
+
+	float invDet = 1.0f / det;
+	rw::V3d tvec = sub(ray.start, a);
+	float u = dot(tvec, pvec) * invDet;
+	if(u < 0.0f || u > 1.0f)
+		return false;
+
+	rw::V3d qvec = cross(tvec, edge1);
+	float v = dot(ray.dir, qvec) * invDet;
+	if(v < 0.0f || u + v > 1.0f)
+		return false;
+
+	float hit = dot(edge2, qvec) * invDet;
+	if(hit < 0.0f)
+		return false;
+
+	*t = hit;
+	return true;
+}
+
+static bool
+IntersectRayColModel(const Ray &worldRay, ObjectInst *inst, rw::V3d *hitPos)
+{
+	ObjectDef *obj = GetObjectDef(inst->m_objectId);
+	if(obj == nil || obj->m_colModel == nil)
+		return false;
+
+	CColModel *col = obj->m_colModel;
+	rw::Matrix invMat;
+	rw::Matrix::invert(&invMat, &inst->m_matrix);
+
+	Ray ray;
+	ray.start = worldRay.start;
+	ray.dir = worldRay.dir;
+	rw::V3d::transformPoints(&ray.start, &ray.start, 1, &invMat);
+	rw::V3d::transformVectors(&ray.dir, &ray.dir, 1, &invMat);
+	ray.dir = normalize(ray.dir);
+
+	float broadT;
+	if(!IntersectRayBox(ray, col->boundingBox, &broadT) &&
+	   !IntersectRaySphere(ray, col->boundingSphere, &broadT))
+		return false;
+
+	float bestT = 1.0e30f;
+	bool found = false;
+
+	for(int i = 0; i < col->numTriangles; i++){
+		CColTriangle *tri = &col->triangles[i];
+		rw::V3d a = GetColVertex(col, tri->a);
+		rw::V3d b = GetColVertex(col, tri->b);
+		rw::V3d c = GetColVertex(col, tri->c);
+		float t;
+		if(IntersectRayTriangle(ray, a, b, c, &t) && t < bestT){
+			bestT = t;
+			found = true;
+		}
+	}
+
+	for(int i = 0; i < col->numBoxes; i++){
+		float t;
+		if(IntersectRayBox(ray, col->boxes[i].box, &t) && t < bestT){
+			bestT = t;
+			found = true;
+		}
+	}
+
+	for(int i = 0; i < col->numSpheres; i++){
+		float t;
+		if(IntersectRaySphere(ray, col->spheres[i].sph, &t) && t < bestT){
+			bestT = t;
+			found = true;
+		}
+	}
+
+	if(!found)
+		return false;
+
+	*hitPos = add(worldRay.start, scale(worldRay.dir, bestT));
+	return true;
+}
+
+static bool
+CanSnapToInst(ObjectInst *inst)
+{
+	if(inst == nil || inst->m_isDeleted)
+		return false;
+	if(!gNoAreaCull && inst->m_area != currentArea && inst->m_area != 13)
+		return false;
+	ObjectDef *obj = GetObjectDef(inst->m_objectId);
+	return obj && obj->m_colModel;
+}
+
+static bool
+PointInsideInstBounds(ObjectInst *inst, float x, float y)
+{
+	CRect bounds = inst->GetBoundRect();
+	return x >= bounds.left && x <= bounds.right &&
+	       y >= bounds.bottom && y <= bounds.top;
+}
+
+static void
+FindGroundHitInList(CPtrList *list, const Ray &ray, float x, float y, rw::V3d *bestHit, float *bestT)
+{
+	for(CPtrNode *p = list->first; p; p = p->next){
+		ObjectInst *inst = (ObjectInst*)p->item;
+		if(!CanSnapToInst(inst))
+			continue;
+		if(!PointInsideInstBounds(inst, x, y))
+			continue;
+
+		rw::V3d hitPos;
+		if(!IntersectRayColModel(ray, inst, &hitPos))
+			continue;
+
+		float t = dot(sub(hitPos, ray.start), ray.dir);
+		if(t >= 0.0f && t < *bestT){
+			*bestT = t;
+			*bestHit = hitPos;
+		}
+	}
+}
+
+static bool
+GetGroundPlacementSurface(rw::V3d pos, rw::V3d *hitPos)
+{
+	Ray ray;
+	ray.start = pos;
+	ray.start.z += 5000.0f;
+	ray.dir = { 0.0f, 0.0f, -1.0f };
+
+	float bestT = 1.0e30f;
+	bool found = false;
+	rw::V3d bestHit = pos;
+
+	if(pos.x >= worldBounds.left && pos.x < worldBounds.right &&
+	   pos.y >= worldBounds.bottom && pos.y < worldBounds.top){
+		Sector *s = GetSector(GetSectorIndexX(pos.x), GetSectorIndexY(pos.y));
+		FindGroundHitInList(&s->buildings, ray, pos.x, pos.y, &bestHit, &bestT);
+		FindGroundHitInList(&s->buildings_overlap, ray, pos.x, pos.y, &bestHit, &bestT);
+		FindGroundHitInList(&s->bigbuildings, ray, pos.x, pos.y, &bestHit, &bestT);
+		FindGroundHitInList(&s->bigbuildings_overlap, ray, pos.x, pos.y, &bestHit, &bestT);
+	}
+
+	FindGroundHitInList(&outOfBoundsSector.buildings, ray, pos.x, pos.y, &bestHit, &bestT);
+	FindGroundHitInList(&outOfBoundsSector.bigbuildings, ray, pos.x, pos.y, &bestHit, &bestT);
+
+	found = bestT < 1.0e30f;
+	if(found)
+		*hitPos = bestHit;
+	return found;
+}
+
+static float
+GetPlacementBaseOffset(int objectId)
+{
+	ObjectDef *obj = GetObjectDef(objectId);
+	if(obj == nil || obj->m_colModel == nil)
+		return 0.0f;
+	return -obj->m_colModel->boundingBox.min.z;
+}
+
+static rw::V3d
 GetPlacementPosition(void)
 {
 	rw::V3d origin = TheCamera.m_position;
 	rw::V3d dir = normalize(TheCamera.m_mouseDir);
+	Ray ray;
+	ray.start = origin;
+	ray.dir = dir;
+	float baseOffset = GetPlacementBaseOffset(GetSpawnObjectId());
+
+	if(gPlaceSnapToObjects){
+		ObjectInst *targetInst = GetInstanceByID(pick());
+		rw::V3d hitPos;
+		if(CanSnapToInst(targetInst) && IntersectRayColModel(ray, targetInst, &hitPos)){
+			hitPos.z += baseOffset;
+			return hitPos;
+		}
+	}
 
 	// Intersect ray with horizontal plane at camera target height
 	float planeZ = TheCamera.m_target.z;
+	rw::V3d surfacePos;
 	if(fabs(dir.z) < 0.001f)
-		return add(origin, scale(dir, 50.0f));
+		surfacePos = add(origin, scale(dir, 50.0f));
+	else{
+		float t = (planeZ - origin.z) / dir.z;
+		if(t < 1.0f) t = 50.0f;
+		if(t > 5000.0f) t = 5000.0f;
 
-	float t = (planeZ - origin.z) / dir.z;
-	if(t < 1.0f) t = 50.0f;
-	if(t > 5000.0f) t = 5000.0f;
+		surfacePos.x = origin.x + dir.x * t;
+		surfacePos.y = origin.y + dir.y * t;
+		surfacePos.z = planeZ;
+	}
 
-	rw::V3d pos;
-	pos.x = origin.x + dir.x * t;
-	pos.y = origin.y + dir.y * t;
-	pos.z = planeZ;
-	return pos;
+	if(gPlaceSnapToGround){
+		rw::V3d groundHit;
+		if(GetGroundPlacementSurface(surfacePos, &groundHit))
+			surfacePos = groundHit;
+	}
+
+	surfacePos.z += baseOffset;
+	return surfacePos;
 }
 
 void

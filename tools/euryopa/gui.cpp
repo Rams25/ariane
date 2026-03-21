@@ -1245,6 +1245,14 @@ uiEditorWindow(void)
 		ImGui::TreePop();
 	}
 
+	if(ImGui::TreeNode("Placement")){
+		ImGui::Checkbox("Snap to clicked object", &gPlaceSnapToObjects);
+		ImGui::Checkbox("Snap to ground below", &gPlaceSnapToGround);
+		ImGui::TextDisabled("Object snap uses the clicked collision surface.");
+		ImGui::TextDisabled("Ground snap drops the placement point vertically as fallback.");
+		ImGui::TreePop();
+	}
+
 	if(ImGui::TreeNode("Selection")){
 		for(p = selection.first; p; p = p->next){
 			inst = (ObjectInst*)p->item;
@@ -1512,18 +1520,11 @@ uiBrowserWindow(void)
 	if(selId >= 0){
 		ObjectDef *sel = GetObjectDef(selId);
 		if(sel){
-			float previewW = ImGui::GetContentRegionAvail().x;
-			float previewH = previewW * 0.75f;
-			if(previewH > 200.0f) previewH = 200.0f;
-			float headerH = previewH +
-				ImGui::GetTextLineHeightWithSpacing()*2.0f +
-				ImGui::GetFrameHeightWithSpacing() +
-				ImGui::GetStyle().ItemSpacing.y*3.0f;
-
-			ImGui::BeginChild("##BrowserHeader", ImVec2(0, headerH), false,
-				ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 			// Preview (rendered in Draw() before main camera)
 			if(gPreviewTexture && gPreviewTexture->raster){
+				float previewW = ImGui::GetContentRegionAvail().x;
+				float previewH = previewW * 0.75f;
+				if(previewH > 200.0f) previewH = 200.0f;
 				ImGui::Image((void*)(intptr_t)gPreviewTexture,
 					ImVec2(previewW, previewH),
 					ImVec2(0, 1), ImVec2(1, 0));
@@ -1559,12 +1560,9 @@ uiBrowserWindow(void)
 					ToggleFavourite(selId);
 			}
 			ImGui::Separator();
-			ImGui::EndChild();
 		}
 	}
 
-	ImGui::BeginChild("##BrowserBody", ImVec2(0, 0), false,
-		ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 	// Tab bar
 	if(ImGui::BeginTabBar("##BrowserTabs")){
 
@@ -1712,7 +1710,6 @@ uiBrowserWindow(void)
 
 		ImGui::EndTabBar();
 	}
-	ImGui::EndChild();
 
 	ImGui::End();
 }
