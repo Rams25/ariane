@@ -5,6 +5,7 @@
 #include "object_categories.h"
 #include "telemetry.h"
 #include "updater.h"
+#include <limits.h>
 #include <string>
 #include <vector>
 
@@ -729,7 +730,9 @@ sceneHasRelatedStreamingFamily(const char *scenePath)
 		ObjectInst *inst = (ObjectInst*)p->item;
 		if(inst->m_imageIndex < 0 || inst->m_file == nil)
 			continue;
-		if(rw::strncmp_ci(inst->m_file->name, prefix, strlen(prefix)) == 0)
+		size_t prefixLen = strlen(prefix);
+		int cmpLen = prefixLen > INT_MAX ? INT_MAX : (int)prefixLen;
+		if(rw::strncmp_ci(inst->m_file->name, prefix, cmpLen) == 0)
 			return true;
 	}
 	return false;
@@ -748,7 +751,9 @@ instanceBelongsToStreamingFamily(ObjectInst *inst, const char *scenePath)
 
 	if(!buildStreamingFamilyPrefix(scenePath, prefix, sizeof(prefix)))
 		return false;
-	return rw::strncmp_ci(inst->m_file->name, prefix, strlen(prefix)) == 0;
+	size_t prefixLen = strlen(prefix);
+	int cmpLen = prefixLen > INT_MAX ? INT_MAX : (int)prefixLen;
+	return rw::strncmp_ci(inst->m_file->name, prefix, cmpLen) == 0;
 }
 
 static bool
