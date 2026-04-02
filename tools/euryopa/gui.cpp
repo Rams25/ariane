@@ -17,6 +17,122 @@
 #include <dirent.h>
 #endif
 
+// Blender-inspired dark theme
+static void
+ApplyBlenderTheme(void)
+{
+	ImGuiStyle &style = ImGui::GetStyle();
+
+	// Rounding
+	style.WindowRounding = 4.0f;
+	style.ChildRounding = 2.0f;
+	style.PopupRounding = 3.0f;
+	style.FrameRounding = 2.0f;
+	style.ScrollbarRounding = 3.0f;
+	style.GrabRounding = 2.0f;
+	style.TabRounding = 2.0f;
+
+	// Spacing & padding
+	style.WindowPadding = ImVec2(6, 6);
+	style.FramePadding = ImVec2(6, 3);
+	style.ItemSpacing = ImVec2(6, 4);
+	style.ItemInnerSpacing = ImVec2(4, 4);
+	style.ScrollbarSize = 12.0f;
+	style.GrabMinSize = 14.0f;
+
+	// Borders
+	style.WindowBorderSize = 1.0f;
+	style.ChildBorderSize = 1.0f;
+	style.PopupBorderSize = 1.0f;
+	style.FrameBorderSize = 0.0f;
+	style.TabBorderSize = 0.0f;
+
+	// Colors — Blender 4.x dark theme palette
+	ImVec4 *colors = style.Colors;
+
+	// Backgrounds
+	colors[ImGuiCol_WindowBg]           = ImVec4(0.118f, 0.118f, 0.118f, 1.00f);  // #1e1e1e
+	colors[ImGuiCol_ChildBg]            = ImVec4(0.137f, 0.137f, 0.137f, 1.00f);  // #232323
+	colors[ImGuiCol_PopupBg]            = ImVec4(0.118f, 0.118f, 0.118f, 0.96f);  // #1e1e1e
+
+	// Borders
+	colors[ImGuiCol_Border]             = ImVec4(0.078f, 0.078f, 0.078f, 1.00f);  // #141414
+	colors[ImGuiCol_BorderShadow]       = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
+
+	// Frame (inputs, sliders, etc.)
+	colors[ImGuiCol_FrameBg]            = ImVec4(0.176f, 0.176f, 0.176f, 1.00f);  // #2d2d2d
+	colors[ImGuiCol_FrameBgHovered]     = ImVec4(0.235f, 0.235f, 0.235f, 1.00f);  // #3c3c3c
+	colors[ImGuiCol_FrameBgActive]      = ImVec4(0.294f, 0.294f, 0.294f, 1.00f);  // #4b4b4b
+
+	// Title bar
+	colors[ImGuiCol_TitleBg]            = ImVec4(0.098f, 0.098f, 0.098f, 1.00f);  // #191919
+	colors[ImGuiCol_TitleBgActive]      = ImVec4(0.137f, 0.137f, 0.137f, 1.00f);  // #232323
+	colors[ImGuiCol_TitleBgCollapsed]   = ImVec4(0.098f, 0.098f, 0.098f, 0.75f);
+	colors[ImGuiCol_MenuBarBg]          = ImVec4(0.137f, 0.137f, 0.137f, 1.00f);  // #232323
+
+	// Scrollbar
+	colors[ImGuiCol_ScrollbarBg]        = ImVec4(0.098f, 0.098f, 0.098f, 0.60f);
+	colors[ImGuiCol_ScrollbarGrab]      = ImVec4(0.275f, 0.275f, 0.275f, 1.00f);  // #464646
+	colors[ImGuiCol_ScrollbarGrabHovered]= ImVec4(0.353f, 0.353f, 0.353f, 1.00f); // #5a5a5a
+	colors[ImGuiCol_ScrollbarGrabActive]= ImVec4(0.431f, 0.431f, 0.431f, 1.00f);  // #6e6e6e
+
+	// Buttons
+	colors[ImGuiCol_Button]             = ImVec4(0.235f, 0.235f, 0.235f, 1.00f);  // #3c3c3c
+	colors[ImGuiCol_ButtonHovered]      = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);  // blue hover
+	colors[ImGuiCol_ButtonActive]       = ImVec4(0.220f, 0.431f, 0.659f, 1.00f);  // blue active
+
+	// Headers (collapsing headers, selectable)
+	colors[ImGuiCol_Header]             = ImVec4(0.235f, 0.235f, 0.235f, 1.00f);  // #3c3c3c
+	colors[ImGuiCol_HeaderHovered]      = ImVec4(0.290f, 0.565f, 0.863f, 0.60f);  // blue hover
+	colors[ImGuiCol_HeaderActive]       = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);  // blue active
+
+	// Tabs
+	colors[ImGuiCol_Tab]                = ImVec4(0.157f, 0.157f, 0.157f, 1.00f);  // #282828
+	colors[ImGuiCol_TabHovered]         = ImVec4(0.290f, 0.565f, 0.863f, 0.80f);  // blue hover
+	colors[ImGuiCol_TabSelected]        = ImVec4(0.216f, 0.216f, 0.216f, 1.00f);  // #373737
+	colors[ImGuiCol_TabDimmed]          = ImVec4(0.137f, 0.137f, 0.137f, 1.00f);  // #232323
+	colors[ImGuiCol_TabDimmedSelected]  = ImVec4(0.216f, 0.216f, 0.216f, 1.00f);  // #373737
+
+	// Sliders / grabs
+	colors[ImGuiCol_SliderGrab]         = ImVec4(0.392f, 0.392f, 0.392f, 1.00f);  // #646464
+	colors[ImGuiCol_SliderGrabActive]   = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);  // blue
+
+	// Checkmarks / bullets
+	colors[ImGuiCol_CheckMark]          = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);  // blue
+
+	// Separator
+	colors[ImGuiCol_Separator]          = ImVec4(0.078f, 0.078f, 0.078f, 1.00f);  // #141414
+	colors[ImGuiCol_SeparatorHovered]   = ImVec4(0.290f, 0.565f, 0.863f, 0.78f);
+	colors[ImGuiCol_SeparatorActive]    = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);
+
+	// Resize grip
+	colors[ImGuiCol_ResizeGrip]         = ImVec4(0.290f, 0.565f, 0.863f, 0.25f);
+	colors[ImGuiCol_ResizeGripHovered]  = ImVec4(0.290f, 0.565f, 0.863f, 0.67f);
+	colors[ImGuiCol_ResizeGripActive]   = ImVec4(0.290f, 0.565f, 0.863f, 0.95f);
+
+	// Text
+	colors[ImGuiCol_Text]               = ImVec4(0.776f, 0.776f, 0.776f, 1.00f);  // #c6c6c6
+	colors[ImGuiCol_TextDisabled]       = ImVec4(0.459f, 0.459f, 0.459f, 1.00f);  // #757575
+
+	// Plot
+	colors[ImGuiCol_PlotLines]          = ImVec4(0.522f, 0.698f, 0.290f, 1.00f);  // green
+	colors[ImGuiCol_PlotLinesHovered]   = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);
+	colors[ImGuiCol_PlotHistogram]      = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);
+	colors[ImGuiCol_PlotHistogramHovered]= ImVec4(0.353f, 0.639f, 0.941f, 1.00f);
+
+	// Selected text
+	colors[ImGuiCol_TextSelectedBg]     = ImVec4(0.290f, 0.565f, 0.863f, 0.35f);
+
+	// Drag & drop
+	colors[ImGuiCol_DragDropTarget]     = ImVec4(0.290f, 0.565f, 0.863f, 0.90f);
+
+	// Nav highlight
+	colors[ImGuiCol_NavHighlight]       = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);
+
+	// Modal dim
+	colors[ImGuiCol_ModalWindowDimBg]   = ImVec4(0.000f, 0.000f, 0.000f, 0.60f);
+}
+
 static bool showDemoWindow;
 static bool showEditorWindow;
 static bool showInstanceWindow;
