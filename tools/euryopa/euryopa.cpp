@@ -35,10 +35,8 @@ static int magnetSelectedPoint = -1;
 // Extremity Snap state
 static ObjectInst *snapA_Inst = nil;
 static rw::V3d snapA_WorldPos;
-static int snapA_PointIndex = -1;
 static ObjectInst *snapB_Inst = nil;
 static rw::V3d snapB_WorldPos;
-static int snapB_PointIndex = -1;
 
 int gameTxdSlot;
 
@@ -1321,14 +1319,11 @@ handleTool(void)
 
 	// select
 	if(CPad::IsMButtonClicked(1)){
-		// Extremity Magnet: don't interfere with sphere picking on the selected object
-		if(gPlaceExtremityMagnet && magnetHoveredPoint >= 0 && magnetInst != nil){
-			ObjectInst *clickedInst = GetInstanceByID(pick());
-			if(clickedInst == magnetInst)
-				return;
-		}
 		ObjectInst *inst = GetInstanceByID(pick());
-		if(inst && !inst->m_isDeleted){
+		// Extremity Magnet: don't interfere with sphere picking on the selected object
+		if(gPlaceExtremityMagnet && magnetHoveredPoint >= 0 && inst == magnetInst)
+			; // skip, let UpdateAndRenderExtremityMagnet handle the click
+		else if(inst && !inst->m_isDeleted){
 			if(CPad::IsShiftDown())
 				inst->Select();
 			else if(CPad::IsAltDown())
@@ -1834,6 +1829,7 @@ MagnetPickSphere(void)
 		magnetInst = sel;
 		magnetSelectedPoint = -1;
 		magnetHoveredPoint = -1;
+		snapA_Inst = nil;
 		if(magnetInst != nil)
 			RebuildExtremityPoints(magnetInst);
 		else
@@ -1881,8 +1877,11 @@ UpdateAndRenderExtremityMagnet(void)
 		return;
 
 	// Select on left click (hover was computed in MagnetPickSphere)
-	if(magnetHoveredPoint >= 0 && CPad::IsMButtonClicked(1))
-		magnetSelectedPoint = magnetHoveredPoint;
+	if(magnetHoveredPoint >= 0 && CPad::IsMButtonClicked(1)){
+		ImGuiIO &io = ImGui::GetIO();
+		if(!io.WantCaptureMouse)
+			magnetSelectedPoint = magnetHoveredPoint;
+	}
 
 	// Draw spheres at each extremity
 	for(int i = 0; i < magnetNumPoints; i++){
@@ -1903,7 +1902,6 @@ SelectExtremityToSnap(void)
 		return;
 	}
 	snapA_Inst = magnetInst;
-	snapA_PointIndex = magnetSelectedPoint;
 	snapA_WorldPos = magnetPoints[magnetSelectedPoint];
 	Toast(TOAST_SELECTION, "Extremity A set on %s", GetObjectDef(snapA_Inst->m_objectId)->m_name);
 }
@@ -1925,7 +1923,6 @@ SnapExtremity(void)
 	}
 
 	snapB_Inst = magnetInst;
-	snapB_PointIndex = magnetSelectedPoint;
 	snapB_WorldPos = magnetPoints[magnetSelectedPoint];
 
 	rw::V3d offset = sub(snapB_WorldPos, snapA_WorldPos);
@@ -1945,11 +1942,24 @@ SnapExtremity(void)
 		self->newPos = newPos;
 	}
 
+	// LOD: move the parent LOD with the same offset
 	if(snapA_Inst->m_lod && !snapA_Inst->m_lod->m_isDeleted){
 		UndoTransform *lod = FindOrAddTransform(transforms, &numTransforms, snapA_Inst->m_lod);
 		if(lod){
 			lod->flags |= UNDO_TRANSFORM_POS;
 			lod->newPos = add(snapA_Inst->m_lod->m_translation, offset);
+		}
+	}else{
+		// HD children: if this IS a LOD, move its HD children too
+		for(CPtrNode *p = instances.first; p; p = p->next){
+			ObjectInst *child = (ObjectInst*)p->item;
+			if(child != snapA_Inst && child->m_lod == snapA_Inst && !child->m_isDeleted){
+				UndoTransform *childT = FindOrAddTransform(transforms, &numTransforms, child);
+				if(childT){
+					childT->flags |= UNDO_TRANSFORM_POS;
+					childT->newPos = add(child->m_translation, offset);
+				}
+			}
 		}
 	}
 
@@ -1964,9 +1974,7 @@ SnapExtremity(void)
 	Toast(TOAST_SELECTION, "Snapped %s to %s", GetObjectDef(snapA_Inst->m_objectId)->m_name, GetObjectDef(snapB_Inst->m_objectId)->m_name);
 
 	snapA_Inst = nil;
-	snapA_PointIndex = -1;
 	snapB_Inst = nil;
-	snapB_PointIndex = -1;
 }
 
 void
