@@ -4477,6 +4477,180 @@ uiWaterWindow(void)
 }
 
 static void
+uiSwapBuildingPopup(ObjectInst *inst)
+{
+	static char swapSearchBuf[256];
+	static int swapSelectedId = -1;
+	static bool swapCustomMode = false;
+	static ObjectInst *swapTargetInst = nil;
+
+	ImGui::SetNextWindowSize(ImVec2(400, 500), ImGuiCond_FirstUseEver);
+	if(ImGui::BeginPopupModal("Swap Building", nil, ImGuiWindowFlags_NoCollapse)){
+
+		// Reset state when target changes
+		if(swapTargetInst != inst){
+			swapTargetInst = inst;
+			swapSelectedId = -1;
+			swapSearchBuf[0] = '\0';
+			swapCustomMode = false;
+		}
+
+		ObjectDef *oldObj = GetObjectDef(inst->m_objectId);
+		ImGui::Text("Current: %s (ID %d)", oldObj ? oldObj->m_name : "?", inst->m_objectId);
+		ImGui::Separator();
+
+		if(ImGui::BeginTabBar("##SwapTabs")){
+
+			// Tab 1: Existing model
+			if(ImGui::BeginTabItem("Existing Model")){
+				swapCustomMode = false;
+				ImGui::InputText("Search##SwapSearch", swapSearchBuf, sizeof(swapSearchBuf));
+				ImGui::SameLine();
+				if(ImGui::Button("Clear##SwapClear")){
+					swapSearchBuf[0] = '\0';
+					swapSelectedId = -1;
+				}
+
+				int numResults = 0;
+				static int swapResults[256];
+				for(int i = 0; i < NUMOBJECTDEFS && numResults < 256; i++){
+					ObjectDef *obj = GetObjectDef(i);
+					if(obj == nil) continue;
+					if(swapSearchBuf[0] != '\0' && !strstr(obj->m_name, swapSearchBuf))
+						continue;
+					swapResults[numResults++] = i;
+				}
+				ImGui::Text("%d models", numResults);
+
+				ImGui::BeginChild("##SwapList", ImVec2(0, -30), true);
+				for(int j = 0; j < numResults; j++){
+					int i = swapResults[j];
+					ObjectDef *obj = GetObjectDef(i);
+					char label[256];
+					snprintf(label, sizeof(label), "%5d  %s", obj->m_id, obj->m_name);
+					if(ImGui::Selectable(label, swapSelectedId == i))
+						swapSelectedId = i;
+				}
+				ImGui::EndChild();
+
+				bool canSwap = swapSelectedId >= 0 && swapSelectedId != inst->m_objectId;
+				if(!canSwap) ImGui::BeginDisabled();
+				if(ImGui::Button("Swap##Existing")){
+					int oldId = inst->m_objectId;
+					if(SwapInstanceModel(inst, swapSelectedId)){
+						UndoRecordSwap(inst, oldId, swapSelectedId);
+						Toast(TOAST_SELECTION, "Swapped to %s", GetObjectDef(swapSelectedId)->m_name);
+					}
+					ImGui::CloseCurrentPopup();
+				}
+				if(!canSwap) ImGui::EndDisabled();
+				if(swapSelectedId == inst->m_objectId){
+					ImGui::SameLine();
+					ImGui::TextDisabled("(same model)");
+				}
+
+				ImGui::EndTabItem();
+			}
+
+			// Tab 2: Custom Import
+			if(ImGui::BeginTabItem("Custom Import")){
+				swapCustomMode = true;
+
+				ImGui::InputText("Model Name", gCustomImport.modelName, sizeof(gCustomImport.modelName));
+				ImGui::InputText("TXD Name", gCustomImport.txdName, sizeof(gCustomImport.txdName));
+				ImGui::DragFloat("Draw Distance", &gCustomImport.drawDist, 1.0f, 1.0f, 3000.0f);
+
+				bool haveDff = gCustomImport.dffSource[0] != '\0';
+				bool haveTxd = gCustomImport.txdSource[0] != '\0';
+				bool haveCol = gCustomImport.hasCol && gCustomImport.colSource[0] != '\0';
+
+				ImGui::Text("DFF: %s", haveDff ? gCustomImport.dffSource : "(not set)");
+				ImGui::Text("TXD: %s", haveTxd ? gCustomImport.txdSource : "(not set)");
+				ImGui::Text("COL: %s", haveCol ? gCustomImport.colSource : "(none)");
+
+				if(ImGui::Button("Browse DFF...")){
+					char path[1024];
+					if(pickFileDialog(path, sizeof(path), ".dff")){
+						strncpy(gCustomImport.dffSource, path, sizeof(gCustomImport.dffSource)-1);
+						char base[MODELNAMELEN];
+						stripExtensionCopy(path, base, sizeof(base));
+						if(gCustomImport.modelName[0] == '\0')
+							strncpy(gCustomImport.modelName, base, sizeof(gCustomImport.modelName)-1);
+						if(gCustomImport.txdName[0] == '\0')
+							strncpy(gCustomImport.txdName, base, sizeof(gCustomImport.txdName)-1);
+					}
+				}
+				ImGui::SameLine();
+				if(ImGui::Button("Browse TXD...")){
+					char path[1024];
+					if(pickFileDialog(path, sizeof(path), ".txd"))
+						strncpy(gCustomImport.txdSource, path, sizeof(gCustomImport.txdSource)-1);
+				}
+				ImGui::SameLine();
+				if(ImGui::Button("Browse COL...")){
+					char path[1024];
+					if(pickFileDialog(path, sizeof(path), ".col")){
+						strncpy(gCustomImport.colSource, path, sizeof(gCustomImport.colSource)-1);
+						gCustomImport.hasCol = true;
+					}
+				}
+
+				bool canImportSwap = haveDff && haveTxd && gCustomImport.modelName[0] != '\0';
+				if(!canImportSwap) ImGui::BeginDisabled();
+				if(ImGui::Button("Import & Swap")){
+					// Run the full custom import (creates ObjectDef + spawns instance)
+					if(finalizeCustomImport()){
+						// The spawned instance is the last one we don't need
+						// Find and delete it
+						int newId = gCustomImport.objectId;
+						ObjectInst *spawned = nil;
+						for(CPtrNode *p = instances.first; p; p = p->next){
+							ObjectInst *si = (ObjectInst*)p->item;
+							if(si->m_objectId == newId && si != inst && !si->m_isDeleted)
+								spawned = si;
+						}
+						if(spawned){
+							spawned->Deselect();
+							spawned->Delete();
+						}
+						// Now swap the target instance
+						int oldId = inst->m_objectId;
+						if(SwapInstanceModel(inst, newId)){
+							UndoRecordSwap(inst, oldId, newId);
+							Toast(TOAST_SELECTION, "Swapped to %s", GetObjectDef(newId)->m_name);
+						}
+						// Reset import state for next use
+						gCustomImport.dffSource[0] = '\0';
+						gCustomImport.txdSource[0] = '\0';
+						gCustomImport.colSource[0] = '\0';
+						gCustomImport.hasCol = false;
+						ImGui::CloseCurrentPopup();
+					}else{
+						if(gCustomImport.error[0])
+							Toast(TOAST_SELECTION, "%s", gCustomImport.error);
+					}
+				}
+				if(!canImportSwap) ImGui::EndDisabled();
+
+				if(gCustomImport.warning[0])
+					ImGui::TextWrapped("Warning: %s", gCustomImport.warning);
+				if(gCustomImport.error[0])
+					ImGui::TextWrapped("Error: %s", gCustomImport.error);
+
+				ImGui::EndTabItem();
+			}
+
+			ImGui::EndTabBar();
+		}
+
+		ImGui::EndPopup();
+	}else{
+		// Popup closed, reset
+		swapTargetInst = nil;
+	}
+}
+
+static void
 uiInstWindow(void)
 {
 	ImGui::Begin("Object Info", &showInstanceWindow);
@@ -4517,6 +4691,12 @@ uiInstWindow(void)
 		}
 		if(haveExportDir)
 			ImGui::TextDisabled("%s", exportDir);
+		if(numSelected == 1){
+			ImGui::Separator();
+			if(ImGui::Button("Swap Building"))
+				ImGui::OpenPopup("Swap Building");
+			uiSwapBuildingPopup((ObjectInst*)selection.first->item);
+		}
 		ImGui::Separator();
 
 		ObjectInst *inst = (ObjectInst*)selection.first->item;

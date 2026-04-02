@@ -348,6 +348,7 @@ enum UndoType {
 	UNDO_DELETE,
 	UNDO_PASTE,
 	UNDO_TRANSFORM_BATCH,
+	UNDO_SWAP,
 };
 
 enum UndoTransformFlags {
@@ -385,6 +386,10 @@ struct UndoAction {
 	// For batch transform actions (snap to ground, etc.)
 	UndoTransform transforms[64];
 	int numTransforms;
+	// For SWAP: change model on an instance
+	ObjectInst *swapInst;
+	int swapOldObjectId;
+	int swapNewObjectId;
 };
 
 void UndoRecordMove(ObjectInst *inst, rw::V3d oldPos, ObjectInst *lodInst, rw::V3d lodOldPos);
@@ -392,8 +397,10 @@ void UndoRecordRotate(ObjectInst *inst, rw::Quat oldRot);
 void UndoRecordDelete(ObjectInst **insts, int num);
 void UndoRecordPaste(ObjectInst **insts, int num);
 void UndoRecordTransformBatch(UndoTransform *transforms, int num);
+void UndoRecordSwap(ObjectInst *inst, int oldObjectId, int newObjectId);
 void Undo(void);
 void Redo(void);
+bool SwapInstanceModel(ObjectInst *inst, int newObjectId);
 
 // Copy/Paste
 void CopySelected(void);

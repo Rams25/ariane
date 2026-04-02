@@ -1091,6 +1091,18 @@ UndoRecordTransformBatch(UndoTransform *transforms, int num)
 }
 
 void
+UndoRecordSwap(ObjectInst *inst, int oldObjectId, int newObjectId)
+{
+	UndoAction a;
+	memset(&a, 0, sizeof(a));
+	a.type = UNDO_SWAP;
+	a.swapInst = inst;
+	a.swapOldObjectId = oldObjectId;
+	a.swapNewObjectId = newObjectId;
+	pushUndo(&a);
+}
+
+void
 Undo(void)
 {
 	if(undoPos <= 0) return;
@@ -1126,6 +1138,9 @@ Undo(void)
 	case UNDO_TRANSFORM_BATCH:
 		for(int i = 0; i < a->numTransforms; i++)
 			applyUndoTransform(a->transforms[i], false);
+		break;
+	case UNDO_SWAP:
+		SwapInstanceModel(a->swapInst, a->swapOldObjectId);
 		break;
 	}
 }
@@ -1166,6 +1181,9 @@ Redo(void)
 	case UNDO_TRANSFORM_BATCH:
 		for(int i = 0; i < a->numTransforms; i++)
 			applyUndoTransform(a->transforms[i], true);
+		break;
+	case UNDO_SWAP:
+		SwapInstanceModel(a->swapInst, a->swapNewObjectId);
 		break;
 	}
 }

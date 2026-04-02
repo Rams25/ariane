@@ -34,6 +34,7 @@ static int magnetSelectedPoint = -1;
 
 // Extremity Snap state
 static ObjectInst *snapA_Inst = nil;
+static rw::V3d snapA_LocalPos;
 static rw::V3d snapA_WorldPos;
 static ObjectInst *snapB_Inst = nil;
 static rw::V3d snapB_WorldPos;
@@ -1903,6 +1904,12 @@ SelectExtremityToSnap(void)
 	}
 	snapA_Inst = magnetInst;
 	snapA_WorldPos = magnetPoints[magnetSelectedPoint];
+	// Store local-space position so we can re-transform if the object moves
+	rw::V3d invPts[1];
+	rw::Matrix invM;
+	rw::Matrix::invert(&invM, &snapA_Inst->m_matrix);
+	rw::V3d::transformPoints(invPts, &snapA_WorldPos, 1, &invM);
+	snapA_LocalPos = invPts[0];
 	Toast(TOAST_SELECTION, "Extremity A set on %s", GetObjectDef(snapA_Inst->m_objectId)->m_name);
 }
 
@@ -1924,6 +1931,9 @@ SnapExtremity(void)
 
 	snapB_Inst = magnetInst;
 	snapB_WorldPos = magnetPoints[magnetSelectedPoint];
+
+	// Re-transform A's local position in case it moved since "Select Extremity to Snap"
+	rw::V3d::transformPoints(&snapA_WorldPos, &snapA_LocalPos, 1, &snapA_Inst->m_matrix);
 
 	rw::V3d offset = sub(snapB_WorldPos, snapA_WorldPos);
 	rw::V3d newPos = add(snapA_Inst->m_translation, offset);
@@ -1975,6 +1985,66 @@ SnapExtremity(void)
 
 	snapA_Inst = nil;
 	snapB_Inst = nil;
+}
+
+bool
+SwapInstanceModel(ObjectInst *inst, int newObjectId)
+{
+	if(inst == nil || inst->m_isDeleted)
+		return false;
+
+	ObjectDef *newObj = GetObjectDef(newObjectId);
+	if(newObj == nil)
+		return false;
+
+	// Ensure new model is loaded
+	if(!newObj->IsLoaded()){
+		RequestObject(newObjectId);
+		LoadAllRequestedObjects();
+	}
+	if(!newObj->IsLoaded()){
+		Toast(TOAST_SELECTION, "Failed to load model %s", newObj->m_name);
+		return false;
+	}
+
+	// Remove from sectors (bounds will change)
+	RemoveInstFromSectors(inst);
+
+	// Destroy old RenderWare object
+	if(inst->m_rwObject){
+		ObjectDef *oldObj = GetObjectDef(inst->m_objectId);
+		if(oldObj && oldObj->m_type == ObjectDef::CLUMP){
+			rw::Clump *clump = (rw::Clump*)inst->m_rwObject;
+			rw::Frame *f = clump->getFrame();
+			if(f) f->destroyHierarchy();
+			clump->destroy();
+		}else{
+			rw::Atomic *atomic = (rw::Atomic*)inst->m_rwObject;
+			rw::Frame *f = atomic->getFrame();
+			if(f){
+				atomic->setFrame(nil);
+				f->destroyHierarchy();
+			}
+			atomic->destroy();
+		}
+		inst->m_rwObject = nil;
+	}
+
+	// Change model
+	inst->m_objectId = newObjectId;
+
+	// Recreate visual
+	inst->UpdateMatrix();
+	inst->CreateRwObject();
+
+	// Re-insert into sectors with new collision bounds
+	InsertInstIntoSectors(inst);
+
+	// Mark dirty for IPL save
+	inst->m_isDirty = true;
+	StampChangeSeq(inst);
+
+	return true;
 }
 
 void
