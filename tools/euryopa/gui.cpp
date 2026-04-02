@@ -5554,6 +5554,8 @@ void addToLogWindow(const char *fmt, va_list args) { }
 void
 gui(void)
 {
+	ApplyBlenderTheme();
+
 	static bool show_another_window = false;
 	static ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 	static bool camloaded = false;
