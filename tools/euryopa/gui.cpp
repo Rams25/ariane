@@ -5,6 +5,7 @@
 #include "object_categories.h"
 #include "telemetry.h"
 #include "updater.h"
+#include <limits.h>
 #include <string>
 #include <vector>
 
@@ -17,120 +18,126 @@
 #include <dirent.h>
 #endif
 
-// Blender-inspired dark theme
+// DCC-inspired dark theme with compact, readable controls
 static void
-ApplyBlenderTheme(void)
+ApplyWorkspaceTheme(void)
 {
 	ImGuiStyle &style = ImGui::GetStyle();
+	ImGuiIO &io = ImGui::GetIO();
 
-	// Rounding
-	style.WindowRounding = 4.0f;
-	style.ChildRounding = 2.0f;
-	style.PopupRounding = 3.0f;
-	style.FrameRounding = 2.0f;
-	style.ScrollbarRounding = 3.0f;
-	style.GrabRounding = 2.0f;
-	style.TabRounding = 2.0f;
+	io.ConfigWindowsMoveFromTitleBarOnly = true;
+
+	// Geometry
+	style.WindowRounding = 6.0f;
+	style.ChildRounding = 5.0f;
+	style.PopupRounding = 5.0f;
+	style.FrameRounding = 4.0f;
+	style.ScrollbarRounding = 6.0f;
+	style.GrabRounding = 3.0f;
+	style.TabRounding = 4.0f;
 
 	// Spacing & padding
-	style.WindowPadding = ImVec2(6, 6);
-	style.FramePadding = ImVec2(6, 3);
-	style.ItemSpacing = ImVec2(6, 4);
+	style.WindowPadding = ImVec2(10, 8);
+	style.FramePadding = ImVec2(8, 5);
+	style.ItemSpacing = ImVec2(8, 6);
 	style.ItemInnerSpacing = ImVec2(4, 4);
 	style.ScrollbarSize = 12.0f;
-	style.GrabMinSize = 14.0f;
+	style.GrabMinSize = 12.0f;
 
 	// Borders
 	style.WindowBorderSize = 1.0f;
-	style.ChildBorderSize = 1.0f;
+	style.ChildBorderSize = 0.0f;
 	style.PopupBorderSize = 1.0f;
 	style.FrameBorderSize = 0.0f;
 	style.TabBorderSize = 0.0f;
+	style.WindowMenuButtonPosition = ImGuiDir_None;
+	style.SeparatorTextBorderSize = 1.0f;
+	style.SeparatorTextAlign = ImVec2(0.0f, 0.5f);
 
-	// Colors — Blender 4.x dark theme palette
+	// Colors
 	ImVec4 *colors = style.Colors;
 
 	// Backgrounds
-	colors[ImGuiCol_WindowBg]           = ImVec4(0.118f, 0.118f, 0.118f, 1.00f);  // #1e1e1e
-	colors[ImGuiCol_ChildBg]            = ImVec4(0.137f, 0.137f, 0.137f, 1.00f);  // #232323
-	colors[ImGuiCol_PopupBg]            = ImVec4(0.118f, 0.118f, 0.118f, 0.96f);  // #1e1e1e
+	colors[ImGuiCol_WindowBg]            = ImVec4(0.125f, 0.125f, 0.125f, 1.00f);
+	colors[ImGuiCol_ChildBg]             = ImVec4(0.145f, 0.145f, 0.145f, 1.00f);
+	colors[ImGuiCol_PopupBg]             = ImVec4(0.116f, 0.116f, 0.116f, 0.98f);
 
 	// Borders
-	colors[ImGuiCol_Border]             = ImVec4(0.078f, 0.078f, 0.078f, 1.00f);  // #141414
-	colors[ImGuiCol_BorderShadow]       = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
+	colors[ImGuiCol_Border]              = ImVec4(0.080f, 0.080f, 0.080f, 1.00f);
+	colors[ImGuiCol_BorderShadow]        = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
 
 	// Frame (inputs, sliders, etc.)
-	colors[ImGuiCol_FrameBg]            = ImVec4(0.176f, 0.176f, 0.176f, 1.00f);  // #2d2d2d
-	colors[ImGuiCol_FrameBgHovered]     = ImVec4(0.235f, 0.235f, 0.235f, 1.00f);  // #3c3c3c
-	colors[ImGuiCol_FrameBgActive]      = ImVec4(0.294f, 0.294f, 0.294f, 1.00f);  // #4b4b4b
+	colors[ImGuiCol_FrameBg]             = ImVec4(0.178f, 0.178f, 0.178f, 1.00f);
+	colors[ImGuiCol_FrameBgHovered]      = ImVec4(0.230f, 0.230f, 0.230f, 1.00f);
+	colors[ImGuiCol_FrameBgActive]       = ImVec4(0.286f, 0.286f, 0.286f, 1.00f);
 
 	// Title bar
-	colors[ImGuiCol_TitleBg]            = ImVec4(0.098f, 0.098f, 0.098f, 1.00f);  // #191919
-	colors[ImGuiCol_TitleBgActive]      = ImVec4(0.137f, 0.137f, 0.137f, 1.00f);  // #232323
-	colors[ImGuiCol_TitleBgCollapsed]   = ImVec4(0.098f, 0.098f, 0.098f, 0.75f);
-	colors[ImGuiCol_MenuBarBg]          = ImVec4(0.137f, 0.137f, 0.137f, 1.00f);  // #232323
+	colors[ImGuiCol_TitleBg]             = ImVec4(0.105f, 0.105f, 0.105f, 1.00f);
+	colors[ImGuiCol_TitleBgActive]       = ImVec4(0.145f, 0.145f, 0.145f, 1.00f);
+	colors[ImGuiCol_TitleBgCollapsed]    = ImVec4(0.105f, 0.105f, 0.105f, 0.75f);
+	colors[ImGuiCol_MenuBarBg]           = ImVec4(0.145f, 0.145f, 0.145f, 1.00f);
 
 	// Scrollbar
-	colors[ImGuiCol_ScrollbarBg]        = ImVec4(0.098f, 0.098f, 0.098f, 0.60f);
-	colors[ImGuiCol_ScrollbarGrab]      = ImVec4(0.275f, 0.275f, 0.275f, 1.00f);  // #464646
-	colors[ImGuiCol_ScrollbarGrabHovered]= ImVec4(0.353f, 0.353f, 0.353f, 1.00f); // #5a5a5a
-	colors[ImGuiCol_ScrollbarGrabActive]= ImVec4(0.431f, 0.431f, 0.431f, 1.00f);  // #6e6e6e
+	colors[ImGuiCol_ScrollbarBg]         = ImVec4(0.098f, 0.098f, 0.098f, 0.60f);
+	colors[ImGuiCol_ScrollbarGrab]       = ImVec4(0.282f, 0.282f, 0.282f, 1.00f);
+	colors[ImGuiCol_ScrollbarGrabHovered]= ImVec4(0.360f, 0.360f, 0.360f, 1.00f);
+	colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.431f, 0.431f, 0.431f, 1.00f);
 
 	// Buttons
-	colors[ImGuiCol_Button]             = ImVec4(0.235f, 0.235f, 0.235f, 1.00f);  // #3c3c3c
-	colors[ImGuiCol_ButtonHovered]      = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);  // blue hover
-	colors[ImGuiCol_ButtonActive]       = ImVec4(0.220f, 0.431f, 0.659f, 1.00f);  // blue active
+	colors[ImGuiCol_Button]              = ImVec4(0.235f, 0.235f, 0.235f, 1.00f);
+	colors[ImGuiCol_ButtonHovered]       = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);
+	colors[ImGuiCol_ButtonActive]        = ImVec4(0.220f, 0.431f, 0.659f, 1.00f);
 
 	// Headers (collapsing headers, selectable)
-	colors[ImGuiCol_Header]             = ImVec4(0.235f, 0.235f, 0.235f, 1.00f);  // #3c3c3c
-	colors[ImGuiCol_HeaderHovered]      = ImVec4(0.290f, 0.565f, 0.863f, 0.60f);  // blue hover
-	colors[ImGuiCol_HeaderActive]       = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);  // blue active
+	colors[ImGuiCol_Header]              = ImVec4(0.228f, 0.228f, 0.228f, 1.00f);
+	colors[ImGuiCol_HeaderHovered]       = ImVec4(0.290f, 0.565f, 0.863f, 0.55f);
+	colors[ImGuiCol_HeaderActive]        = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);
 
 	// Tabs
-	colors[ImGuiCol_Tab]                = ImVec4(0.157f, 0.157f, 0.157f, 1.00f);  // #282828
-	colors[ImGuiCol_TabHovered]         = ImVec4(0.290f, 0.565f, 0.863f, 0.80f);  // blue hover
-	colors[ImGuiCol_TabSelected]        = ImVec4(0.216f, 0.216f, 0.216f, 1.00f);  // #373737
-	colors[ImGuiCol_TabDimmed]          = ImVec4(0.137f, 0.137f, 0.137f, 1.00f);  // #232323
-	colors[ImGuiCol_TabDimmedSelected]  = ImVec4(0.216f, 0.216f, 0.216f, 1.00f);  // #373737
+	colors[ImGuiCol_Tab]                 = ImVec4(0.160f, 0.160f, 0.160f, 1.00f);
+	colors[ImGuiCol_TabHovered]          = ImVec4(0.290f, 0.565f, 0.863f, 0.80f);
+	colors[ImGuiCol_TabSelected]         = ImVec4(0.216f, 0.216f, 0.216f, 1.00f);
+	colors[ImGuiCol_TabDimmed]           = ImVec4(0.137f, 0.137f, 0.137f, 1.00f);
+	colors[ImGuiCol_TabDimmedSelected]   = ImVec4(0.216f, 0.216f, 0.216f, 1.00f);
 
 	// Sliders / grabs
-	colors[ImGuiCol_SliderGrab]         = ImVec4(0.392f, 0.392f, 0.392f, 1.00f);  // #646464
-	colors[ImGuiCol_SliderGrabActive]   = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);  // blue
+	colors[ImGuiCol_SliderGrab]          = ImVec4(0.392f, 0.392f, 0.392f, 1.00f);
+	colors[ImGuiCol_SliderGrabActive]    = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);
 
 	// Checkmarks / bullets
-	colors[ImGuiCol_CheckMark]          = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);  // blue
+	colors[ImGuiCol_CheckMark]           = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);
 
 	// Separator
-	colors[ImGuiCol_Separator]          = ImVec4(0.078f, 0.078f, 0.078f, 1.00f);  // #141414
-	colors[ImGuiCol_SeparatorHovered]   = ImVec4(0.290f, 0.565f, 0.863f, 0.78f);
-	colors[ImGuiCol_SeparatorActive]    = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);
+	colors[ImGuiCol_Separator]           = ImVec4(0.078f, 0.078f, 0.078f, 1.00f);
+	colors[ImGuiCol_SeparatorHovered]    = ImVec4(0.290f, 0.565f, 0.863f, 0.78f);
+	colors[ImGuiCol_SeparatorActive]     = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);
 
 	// Resize grip
-	colors[ImGuiCol_ResizeGrip]         = ImVec4(0.290f, 0.565f, 0.863f, 0.25f);
-	colors[ImGuiCol_ResizeGripHovered]  = ImVec4(0.290f, 0.565f, 0.863f, 0.67f);
-	colors[ImGuiCol_ResizeGripActive]   = ImVec4(0.290f, 0.565f, 0.863f, 0.95f);
+	colors[ImGuiCol_ResizeGrip]          = ImVec4(0.290f, 0.565f, 0.863f, 0.25f);
+	colors[ImGuiCol_ResizeGripHovered]   = ImVec4(0.290f, 0.565f, 0.863f, 0.67f);
+	colors[ImGuiCol_ResizeGripActive]    = ImVec4(0.290f, 0.565f, 0.863f, 0.95f);
 
 	// Text
-	colors[ImGuiCol_Text]               = ImVec4(0.776f, 0.776f, 0.776f, 1.00f);  // #c6c6c6
-	colors[ImGuiCol_TextDisabled]       = ImVec4(0.459f, 0.459f, 0.459f, 1.00f);  // #757575
+	colors[ImGuiCol_Text]                = ImVec4(0.790f, 0.790f, 0.790f, 1.00f);
+	colors[ImGuiCol_TextDisabled]        = ImVec4(0.459f, 0.459f, 0.459f, 1.00f);
 
 	// Plot
-	colors[ImGuiCol_PlotLines]          = ImVec4(0.522f, 0.698f, 0.290f, 1.00f);  // green
-	colors[ImGuiCol_PlotLinesHovered]   = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);
-	colors[ImGuiCol_PlotHistogram]      = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);
+	colors[ImGuiCol_PlotLines]           = ImVec4(0.522f, 0.698f, 0.290f, 1.00f);
+	colors[ImGuiCol_PlotLinesHovered]    = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);
+	colors[ImGuiCol_PlotHistogram]       = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);
 	colors[ImGuiCol_PlotHistogramHovered]= ImVec4(0.353f, 0.639f, 0.941f, 1.00f);
 
 	// Selected text
-	colors[ImGuiCol_TextSelectedBg]     = ImVec4(0.290f, 0.565f, 0.863f, 0.35f);
+	colors[ImGuiCol_TextSelectedBg]      = ImVec4(0.290f, 0.565f, 0.863f, 0.35f);
 
 	// Drag & drop
-	colors[ImGuiCol_DragDropTarget]     = ImVec4(0.290f, 0.565f, 0.863f, 0.90f);
+	colors[ImGuiCol_DragDropTarget]      = ImVec4(0.290f, 0.565f, 0.863f, 0.90f);
 
 	// Nav highlight
-	colors[ImGuiCol_NavHighlight]       = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);
+	colors[ImGuiCol_NavHighlight]        = ImVec4(0.290f, 0.565f, 0.863f, 1.00f);
 
 	// Modal dim
-	colors[ImGuiCol_ModalWindowDimBg]   = ImVec4(0.000f, 0.000f, 0.000f, 0.60f);
+	colors[ImGuiCol_ModalWindowDimBg]    = ImVec4(0.000f, 0.000f, 0.000f, 0.60f);
 }
 
 static bool showDemoWindow;
@@ -145,6 +152,8 @@ static bool showRenderingWindow;
 static bool showBrowserWindow;
 static bool showDiffWindow;
 static bool showToolsWindow = true;
+static bool showWorkspaceWindow = true;
+static bool gStaticDockLayoutEnabled = true;
 static bool gBrowserIdeListDirty = true;
 static char gIplFilterSearch[128];
 
@@ -722,7 +731,9 @@ sceneHasRelatedStreamingFamily(const char *scenePath)
 		ObjectInst *inst = (ObjectInst*)p->item;
 		if(inst->m_imageIndex < 0 || inst->m_file == nil)
 			continue;
-		if(rw::strncmp_ci(inst->m_file->name, prefix, strlen(prefix)) == 0)
+		size_t prefixLen = strlen(prefix);
+		int cmpLen = prefixLen > INT_MAX ? INT_MAX : (int)prefixLen;
+		if(rw::strncmp_ci(inst->m_file->name, prefix, cmpLen) == 0)
 			return true;
 	}
 	return false;
@@ -741,7 +752,9 @@ instanceBelongsToStreamingFamily(ObjectInst *inst, const char *scenePath)
 
 	if(!buildStreamingFamilyPrefix(scenePath, prefix, sizeof(prefix)))
 		return false;
-	return rw::strncmp_ci(inst->m_file->name, prefix, strlen(prefix)) == 0;
+	size_t prefixLen = strlen(prefix);
+	int cmpLen = prefixLen > INT_MAX ? INT_MAX : (int)prefixLen;
+	return rw::strncmp_ci(inst->m_file->name, prefix, cmpLen) == 0;
 }
 
 static bool
@@ -2414,6 +2427,138 @@ HandleCustomImportDrop(const char *path)
 }
 
 static void
+uiWorkspaceQuickToggle(const char *label, const char *shortcut, bool *state)
+{
+	if(ImGui::Button(label, ImVec2(-1.0f, 0.0f)))
+		*state ^= 1;
+	if(shortcut)
+		ImGui::TextDisabled("%s", shortcut);
+}
+
+static void
+uiWorkspaceWindow(void)
+{
+	int selectedCount = 0;
+	for(CPtrNode *p = selection.first; p; p = p->next)
+		selectedCount++;
+	int instanceCount = 0;
+	for(CPtrNode *p = instances.first; p; p = p->next)
+		instanceCount++;
+
+	ImGui::SetNextWindowSize(ImVec2(330.0f, 700.0f), ImGuiCond_FirstUseEver);
+	ImGui::Begin("Workspace", &showWorkspaceWindow);
+
+	if(ImGui::CollapsingHeader("Session", ImGuiTreeNodeFlags_DefaultOpen)){
+		if(params.numAreas){
+			ImGui::PushItemWidth(-1.0f);
+			if(ImGui::BeginCombo("Area", params.areaNames[currentArea])){
+				for(int n = 0; n < params.numAreas; n++){
+					bool is_selected = n == currentArea;
+					if(ImGui::Selectable(params.areaNames[n], is_selected))
+						currentArea = n;
+					if(is_selected)
+						ImGui::SetItemDefaultFocus();
+				}
+				ImGui::EndCombo();
+			}
+			ImGui::PopItemWidth();
+		}
+
+		ImGui::Text("Scale");
+		ImGui::SameLine();
+		if(ImGui::SmallButton("-")) ImGui::GetIO().FontGlobalScale *= 0.9f;
+		ImGui::SameLine();
+		if(ImGui::SmallButton("+")) ImGui::GetIO().FontGlobalScale *= 1.1f;
+
+		ImGui::Text("Frame time: %.3f ms", 1000.0f / ImGui::GetIO().Framerate);
+		ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+		ImGui::Separator();
+		ImGui::Text("Selection: %d", selectedCount);
+		ImGui::Text("Instances: %d", instanceCount);
+		ImGui::Text("Place mode: %s", gPlaceMode ? "Enabled" : "Disabled");
+		ImGui::Checkbox("Static dock layout", &gStaticDockLayoutEnabled);
+	}
+
+	if(ImGui::CollapsingHeader("Panels", ImGuiTreeNodeFlags_DefaultOpen)){
+		ImGui::Columns(2, "workspace_panels", false);
+		uiWorkspaceQuickToggle("Browser", "B", &showBrowserWindow);
+		ImGui::NextColumn();
+		uiWorkspaceQuickToggle("Object Info", "I", &showInstanceWindow);
+		ImGui::NextColumn();
+		uiWorkspaceQuickToggle("Editor", "E", &showEditorWindow);
+		ImGui::NextColumn();
+		uiWorkspaceQuickToggle("Tools", "X", &showToolsWindow);
+		ImGui::NextColumn();
+		uiWorkspaceQuickToggle("Rendering", "R", &showRenderingWindow);
+		ImGui::NextColumn();
+		uiWorkspaceQuickToggle("View", "V", &showViewWindow);
+		ImGui::NextColumn();
+		uiWorkspaceQuickToggle("Time & Weather", "T", &showTimeWeatherWindow);
+		ImGui::NextColumn();
+		uiWorkspaceQuickToggle("Changes", "F", &showDiffWindow);
+		ImGui::Columns(1);
+	}
+
+	if(ImGui::CollapsingHeader("Actions", ImGuiTreeNodeFlags_DefaultOpen)){
+		if(ImGui::Button("Save all", ImVec2(-1.0f, 0.0f))){
+			if(saveAllIpls())
+				Toast(TOAST_SAVE, "Saved all IPL files to %s", getSaveDestinationLabel());
+		}
+		if(ImGui::Button("Test in game", ImVec2(-1.0f, 0.0f)))
+			testInGame();
+		if(ImGui::Button("Hot reload", ImVec2(-1.0f, 0.0f)))
+			hotReloadIpls();
+		ImGui::SeparatorText("Shortcuts");
+		ImGui::BulletText("W/Q: translate/rotate gizmo");
+		ImGui::BulletText("Ctrl+C / Ctrl+V: copy / paste");
+		ImGui::BulletText("Delete: remove selection");
+		ImGui::BulletText("Esc: cancel current mode");
+	}
+
+	ImGui::End();
+}
+
+struct StaticDockLayout
+{
+	float top;
+	float pad;
+	float leftX;
+	float leftW;
+	float centerX;
+	float centerW;
+	float rightX;
+	float rightW;
+	float upperH;
+	float lowerH;
+	float viewH;
+	float viewportH;
+};
+
+static StaticDockLayout
+getStaticDockLayout(void)
+{
+	ImVec2 d = ImGui::GetIO().DisplaySize;
+	StaticDockLayout l;
+	l.top = ImGui::GetFrameHeight();
+	l.pad = 8.0f;
+	l.leftX = showWorkspaceWindow ? (332.0f + l.pad * 2.0f) : l.pad;
+	l.leftW = 360.0f;
+	l.rightW = 390.0f;
+	l.rightX = d.x - l.rightW - l.pad;
+	l.centerX = l.leftX + l.leftW + l.pad;
+	l.centerW = l.rightX - l.centerX - l.pad;
+	l.viewH = 170.0f;
+	l.lowerH = 250.0f;
+	l.upperH = (d.y - l.top - l.viewH - l.lowerH - l.pad * 5.0f) * 0.5f;
+	if(l.upperH < 180.0f)
+		l.upperH = 180.0f;
+	l.viewportH = d.y - l.top - l.lowerH - l.viewH - l.pad * 4.0f;
+	if(l.viewportH < 220.0f)
+		l.viewportH = 220.0f;
+	return l;
+}
+
+static void
 uiMainmenu(void)
 {
 	if(ImGui::BeginMainMenuBar()){
@@ -2449,6 +2594,8 @@ uiMainmenu(void)
 			ImGui::EndMenu();
 		}
 		if(ImGui::BeginMenu("Window")){
+			if(ImGui::MenuItem("Workspace", "U", showWorkspaceWindow)) { showWorkspaceWindow ^= 1; }
+			ImGui::Separator();
 			if(ImGui::MenuItem("Time & Weather", "T", showTimeWeatherWindow)) { showTimeWeatherWindow ^= 1; }
 			if(ImGui::MenuItem("View", "V", showViewWindow)) { showViewWindow ^= 1; }
 			if(ImGui::MenuItem("Rendering", "R", showRenderingWindow)) { showRenderingWindow ^= 1; }
@@ -2467,33 +2614,8 @@ uiMainmenu(void)
 			}
 			ImGui::EndMenu();
 		}
-
-		if(params.numAreas){
-			ImGui::PushItemWidth(100);
-			if(ImGui::BeginCombo("Area", params.areaNames[currentArea])){
-				for(int n = 0; n < params.numAreas; n++){
-					bool is_selected = n == currentArea;
-					static char str[100];
-					sprintf(str, "%d - %s", n, params.areaNames[n]);
-					if(ImGui::Selectable(str, is_selected))
-						currentArea = n;
-					if(is_selected)
-						ImGui::SetItemDefaultFocus();
-				}
-				ImGui::EndCombo();
-			}
-			ImGui::PopItemWidth();
-		}
-
-
 		ImGui::Separator();
-		ImGui::Text("UI");
-		ImGui::SameLine();
-		if(ImGui::SmallButton("-")) ImGui::GetIO().FontGlobalScale *= 0.9f;
-		ImGui::SameLine();
-		if(ImGui::SmallButton("+")) ImGui::GetIO().FontGlobalScale *= 1.1f;
-		ImGui::Separator();
-		ImGui::Text("%.3f ms/frame %.1f FPS", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+		ImGui::Text("Edit | Build | Inspect");
 		ImGui::EndMainMenuBar();
 	}
 	uiExportPrefabPopup();
@@ -5554,7 +5676,7 @@ void addToLogWindow(const char *fmt, va_list args) { }
 void
 gui(void)
 {
-	ApplyBlenderTheme();
+	ApplyWorkspaceTheme();
 
 	static bool show_another_window = false;
 	static ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
@@ -5686,8 +5808,26 @@ gui(void)
 	if(!CPad::IsCtrlDown() && CPad::IsKeyJustDown('G'))
 		SnapSelectedToGround(CPad::IsShiftDown());
 
+	if(!CPad::IsCtrlDown() && !CPad::IsShiftDown() && CPad::IsKeyJustDown('U'))
+		showWorkspaceWindow ^= 1;
+	if(showWorkspaceWindow){
+		if(gStaticDockLayoutEnabled){
+			float top = ImGui::GetFrameHeight();
+			float pad = 8.0f;
+			ImGui::SetNextWindowPos(ImVec2(pad, top + pad), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(332.0f, ImGui::GetIO().DisplaySize.y - top - pad * 2.0f), ImGuiCond_Always);
+		}
+		uiWorkspaceWindow();
+	}
+
+	StaticDockLayout dock = getStaticDockLayout();
+
 	if(CPad::IsKeyJustDown('T')) showTimeWeatherWindow ^= 1;
 	if(showTimeWeatherWindow){
+		if(gStaticDockLayoutEnabled){
+			ImGui::SetNextWindowPos(ImVec2(dock.centerX, dock.top + dock.pad), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(dock.centerW, dock.viewH), ImGuiCond_Always);
+		}
 		ImGui::Begin("Time & Weather", &showTimeWeatherWindow);
 		uiTimeWeather();
 		ImGui::End();
@@ -5695,7 +5835,12 @@ gui(void)
 
 	if(!CPad::IsCtrlDown() && CPad::IsKeyJustDown('V')) showViewWindow ^= 1;
 	if(showViewWindow){
-		ImGui::SetNextWindowSize(ImVec2(460.0f, 640.0f), ImGuiCond_FirstUseEver);
+		if(gStaticDockLayoutEnabled){
+			ImGui::SetNextWindowPos(ImVec2(dock.rightX, dock.top + dock.pad), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(dock.rightW, dock.upperH), ImGuiCond_Always);
+		}else{
+			ImGui::SetNextWindowSize(ImVec2(460.0f, 640.0f), ImGuiCond_FirstUseEver);
+		}
 		ImGui::Begin("View", &showViewWindow);
 		uiView();
 		ImGui::End();
@@ -5703,22 +5848,50 @@ gui(void)
 
 	if(!CPad::IsCtrlDown() && CPad::IsKeyJustDown('R')) showRenderingWindow ^= 1;
 	if(showRenderingWindow){
+		if(gStaticDockLayoutEnabled){
+			ImGui::SetNextWindowPos(ImVec2(dock.rightX, dock.top + dock.pad + dock.upperH + dock.pad), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(dock.rightW, dock.upperH), ImGuiCond_Always);
+		}
 		ImGui::Begin("Rendering", &showRenderingWindow);
 		uiRendering();
 		ImGui::End();
 	}
 
 	if(CPad::IsKeyJustDown('X')) showToolsWindow ^= 1;
-	if(showToolsWindow) uiToolsWindow();
+	if(showToolsWindow){
+		if(gStaticDockLayoutEnabled){
+			ImGui::SetNextWindowPos(ImVec2(dock.rightX, dock.top + dock.pad + dock.upperH * 2.0f + dock.pad * 2.0f), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(dock.rightW, dock.lowerH), ImGuiCond_Always);
+		}
+		uiToolsWindow();
+	}
 
 	if(!CPad::IsCtrlDown() && !CPad::IsShiftDown() && CPad::IsKeyJustDown('I')) showInstanceWindow ^= 1;
-	if(showInstanceWindow) uiInstWindow();
+	if(showInstanceWindow){
+		if(gStaticDockLayoutEnabled){
+			ImGui::SetNextWindowPos(ImVec2(dock.leftX, dock.top + dock.pad + dock.viewH + dock.pad + dock.viewportH + dock.pad), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(dock.leftW, dock.lowerH), ImGuiCond_Always);
+		}
+		uiInstWindow();
+	}
 
 	if(!CPad::IsCtrlDown() && !CPad::IsShiftDown() && CPad::IsKeyJustDown('E')) showEditorWindow ^= 1;
-	if(showEditorWindow) uiEditorWindow();
+	if(showEditorWindow){
+		if(gStaticDockLayoutEnabled){
+			ImGui::SetNextWindowPos(ImVec2(dock.leftX, dock.top + dock.pad + dock.viewH + dock.pad), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(dock.leftW, dock.viewportH), ImGuiCond_Always);
+		}
+		uiEditorWindow();
+	}
 
 	if(!CPad::IsCtrlDown() && CPad::IsKeyJustDown('F')) showDiffWindow ^= 1;
-	if(showDiffWindow) uiDiffWindow();
+	if(showDiffWindow){
+		if(gStaticDockLayoutEnabled){
+			ImGui::SetNextWindowPos(ImVec2(dock.centerX, dock.top + dock.pad + dock.viewH + dock.pad + dock.viewportH + dock.pad), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(dock.centerW, dock.lowerH), ImGuiCond_Always);
+		}
+		uiDiffWindow();
+	}
 
 	if(CPad::IsKeyJustDown('B')){
 		showBrowserWindow ^= 1;
@@ -5726,6 +5899,10 @@ gui(void)
 			SpawnExitPlaceMode();
 	}
 	if(showBrowserWindow){
+		if(gStaticDockLayoutEnabled){
+			ImGui::SetNextWindowPos(ImVec2(dock.leftX, dock.top + dock.pad), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(dock.leftW, dock.viewH + dock.viewportH), ImGuiCond_Always);
+		}
 		uiBrowserWindow();
 		// ImGui X button can set showBrowserWindow to false
 		if(!showBrowserWindow && gPlaceMode)
