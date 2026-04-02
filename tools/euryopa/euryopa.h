@@ -328,6 +328,13 @@ extern bool gGizmoHovered;
 extern bool gGizmoUsing;
 extern bool gPlaceSnapToObjects;
 extern bool gPlaceSnapToGround;
+extern bool gPlaceExtremityMagnet;
+
+// Extremity Magnet
+void MagnetPickSphere(void);
+void UpdateAndRenderExtremityMagnet(void);
+void SelectExtremityToSnap(void);
+void SnapExtremity(void);
 extern bool gDragFollowGround;
 extern bool gDragAlignToSurface;
 extern bool gGizmoSnap;

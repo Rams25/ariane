@@ -4163,6 +4163,14 @@ uiToolsWindow(void)
 	ImGui::Text("Placement");
 	ImGui::Checkbox("Snap to object", &gPlaceSnapToObjects);
 	ImGui::Checkbox("Snap to ground", &gPlaceSnapToGround);
+	ImGui::Checkbox("Extremity Magnet", &gPlaceExtremityMagnet);
+	ImGui::BeginDisabled(!gPlaceExtremityMagnet);
+	if(ImGui::Button("Select Extremity to Snap"))
+		SelectExtremityToSnap();
+	ImGui::SameLine();
+	if(ImGui::Button("Snap Extremity"))
+		SnapExtremity();
+	ImGui::EndDisabled();
 
 	ImGui::Separator();
 

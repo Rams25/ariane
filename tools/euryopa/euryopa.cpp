@@ -17,11 +17,28 @@ bool gGizmoHovered = false;
 bool gGizmoUsing = false;
 bool gPlaceSnapToObjects = true;
 bool gPlaceSnapToGround = true;
+bool gPlaceExtremityMagnet = false;
 bool gDragFollowGround = false;
 bool gDragAlignToSurface = false;
 bool gGizmoSnap = false;
 float gGizmoSnapAngle = 15.0f;
 float gGizmoSnapTranslate = 1.0f;
+
+// Extremity Magnet state
+#define MAX_MAGNET_POINTS 256
+static ObjectInst *magnetInst = nil;
+static rw::V3d magnetPoints[MAX_MAGNET_POINTS];
+static int magnetNumPoints = 0;
+static int magnetHoveredPoint = -1;
+static int magnetSelectedPoint = -1;
+
+// Extremity Snap state
+static ObjectInst *snapA_Inst = nil;
+static rw::V3d snapA_WorldPos;
+static int snapA_PointIndex = -1;
+static ObjectInst *snapB_Inst = nil;
+static rw::V3d snapB_WorldPos;
+static int snapB_PointIndex = -1;
 
 int gameTxdSlot;
 
@@ -1304,6 +1321,12 @@ handleTool(void)
 
 	// select
 	if(CPad::IsMButtonClicked(1)){
+		// Extremity Magnet: don't interfere with sphere picking on the selected object
+		if(gPlaceExtremityMagnet && magnetHoveredPoint >= 0 && magnetInst != nil){
+			ObjectInst *clickedInst = GetInstanceByID(pick());
+			if(clickedInst == magnetInst)
+				return;
+		}
 		ObjectInst *inst = GetInstanceByID(pick());
 		if(inst && !inst->m_isDeleted){
 			if(CPad::IsShiftDown())
@@ -1727,6 +1750,225 @@ updateFPS(void)
 	avgTimeStep = total / n;
 }
 
+
+static bool
+MagnetPointExists(rw::V3d *pts, int num, rw::V3d p)
+{
+	float eps = 0.01f;
+	for(int i = 0; i < num; i++){
+		rw::V3d d = sub(pts[i], p);
+		if(d.x*d.x + d.y*d.y + d.z*d.z < eps)
+			return true;
+	}
+	return false;
+}
+
+static void
+RebuildExtremityPoints(ObjectInst *inst)
+{
+	magnetNumPoints = 0;
+	magnetSelectedPoint = -1;
+
+	ObjectDef *obj = GetObjectDef(inst->m_objectId);
+	if(obj == nil || obj->m_colModel == nil)
+		return;
+
+	CColModel *col = obj->m_colModel;
+
+	// Collect unique vertices from triangle mesh
+	for(int i = 0; i < col->numTriangles; i++){
+		CColTriangle *tri = &col->triangles[i];
+		rw::V3d a = GetColVertex(col, tri->a);
+		rw::V3d b = GetColVertex(col, tri->b);
+		rw::V3d c = GetColVertex(col, tri->c);
+		if(magnetNumPoints < MAX_MAGNET_POINTS && !MagnetPointExists(magnetPoints, magnetNumPoints, a))
+			magnetPoints[magnetNumPoints++] = a;
+		if(magnetNumPoints < MAX_MAGNET_POINTS && !MagnetPointExists(magnetPoints, magnetNumPoints, b))
+			magnetPoints[magnetNumPoints++] = b;
+		if(magnetNumPoints < MAX_MAGNET_POINTS && !MagnetPointExists(magnetPoints, magnetNumPoints, c))
+			magnetPoints[magnetNumPoints++] = c;
+	}
+
+	// Add sphere centers
+	for(int i = 0; i < col->numSpheres; i++){
+		rw::V3d c = col->spheres[i].sph.center;
+		if(magnetNumPoints < MAX_MAGNET_POINTS && !MagnetPointExists(magnetPoints, magnetNumPoints, c))
+			magnetPoints[magnetNumPoints++] = c;
+	}
+
+	// Add box corners
+	for(int i = 0; i < col->numBoxes; i++){
+		CBox *b = &col->boxes[i].box;
+		rw::V3d corners[8];
+		corners[0] = rw::makeV3d(b->min.x, b->min.y, b->min.z);
+		corners[1] = rw::makeV3d(b->max.x, b->min.y, b->min.z);
+		corners[2] = rw::makeV3d(b->min.x, b->max.y, b->min.z);
+		corners[3] = rw::makeV3d(b->max.x, b->max.y, b->min.z);
+		corners[4] = rw::makeV3d(b->min.x, b->min.y, b->max.z);
+		corners[5] = rw::makeV3d(b->max.x, b->min.y, b->max.z);
+		corners[6] = rw::makeV3d(b->min.x, b->max.y, b->max.z);
+		corners[7] = rw::makeV3d(b->max.x, b->max.y, b->max.z);
+		for(int j = 0; j < 8; j++){
+			if(magnetNumPoints < MAX_MAGNET_POINTS && !MagnetPointExists(magnetPoints, magnetNumPoints, corners[j]))
+				magnetPoints[magnetNumPoints++] = corners[j];
+		}
+	}
+
+	// Transform all points to world space
+	rw::V3d::transformPoints(magnetPoints, magnetPoints, magnetNumPoints, &inst->m_matrix);
+}
+
+// Called before handleTool to update hover state
+void
+MagnetPickSphere(void)
+{
+	if(!gPlaceExtremityMagnet)
+		return;
+
+	// Check selection and rebuild if changed
+	ObjectInst *sel = nil;
+	if(selection.first)
+		sel = (ObjectInst*)selection.first->item;
+
+	if(sel != magnetInst){
+		magnetInst = sel;
+		magnetSelectedPoint = -1;
+		magnetHoveredPoint = -1;
+		if(magnetInst != nil)
+			RebuildExtremityPoints(magnetInst);
+		else
+			magnetNumPoints = 0;
+	}
+
+	if(magnetInst == nil || magnetNumPoints == 0)
+		return;
+
+	// Don't recompute hover when mouse is over ImGui
+	ImGuiIO &io = ImGui::GetIO();
+	if(io.WantCaptureMouse)
+		return;
+
+	magnetHoveredPoint = -1;
+
+	Ray ray;
+	ray.start = TheCamera.m_position;
+	ray.dir = normalize(TheCamera.m_mouseDir);
+
+	float closestT = 1.0e30f;
+	float sphereRadius = 0.3f;
+	for(int i = 0; i < magnetNumPoints; i++){
+		CSphere sph;
+		sph.center = magnetPoints[i];
+		sph.radius = sphereRadius;
+		float t;
+		if(IntersectRaySphere(ray, sph, &t)){
+			if(t > 0.0f && t < closestT){
+				closestT = t;
+				magnetHoveredPoint = i;
+			}
+		}
+	}
+}
+
+// Called during rendering to draw spheres and handle selection
+void
+UpdateAndRenderExtremityMagnet(void)
+{
+	static rw::RGBA white = { 255, 255, 255, 255 };
+	static rw::RGBA blue = { 100, 150, 255, 255 };
+
+	if(!gPlaceExtremityMagnet || magnetInst == nil || magnetNumPoints == 0)
+		return;
+
+	// Select on left click (hover was computed in MagnetPickSphere)
+	if(magnetHoveredPoint >= 0 && CPad::IsMButtonClicked(1))
+		magnetSelectedPoint = magnetHoveredPoint;
+
+	// Draw spheres at each extremity
+	for(int i = 0; i < magnetNumPoints; i++){
+		CSphere sph;
+		sph.center = magnetPoints[i];
+		sph.radius = 0.3f;
+		rw::RGBA col = (i == magnetSelectedPoint || i == magnetHoveredPoint) ? blue : white;
+		RenderWireSphere(&sph, col, nil);
+		RenderSphereAsCross(&sph, col, nil);
+	}
+}
+
+void
+SelectExtremityToSnap(void)
+{
+	if(magnetSelectedPoint < 0 || magnetInst == nil){
+		Toast(TOAST_SELECTION, "Please click a sphere handle on an object first");
+		return;
+	}
+	snapA_Inst = magnetInst;
+	snapA_PointIndex = magnetSelectedPoint;
+	snapA_WorldPos = magnetPoints[magnetSelectedPoint];
+	Toast(TOAST_SELECTION, "Extremity A set on %s", GetObjectDef(snapA_Inst->m_objectId)->m_name);
+}
+
+void
+SnapExtremity(void)
+{
+	if(snapA_Inst == nil){
+		Toast(TOAST_SELECTION, "Please use 'Select Extremity to Snap' first");
+		return;
+	}
+	if(magnetSelectedPoint < 0 || magnetInst == nil){
+		Toast(TOAST_SELECTION, "Please click a target sphere handle on the destination object");
+		return;
+	}
+	if(magnetInst == snapA_Inst){
+		Toast(TOAST_SELECTION, "Please click a sphere handle on a different object");
+		return;
+	}
+
+	snapB_Inst = magnetInst;
+	snapB_PointIndex = magnetSelectedPoint;
+	snapB_WorldPos = magnetPoints[magnetSelectedPoint];
+
+	rw::V3d offset = sub(snapB_WorldPos, snapA_WorldPos);
+	rw::V3d newPos = add(snapA_Inst->m_translation, offset);
+
+	if(length(offset) < 0.0001f){
+		Toast(TOAST_SELECTION, "Extremities are already aligned");
+		return;
+	}
+
+	UndoTransform transforms[64];
+	int numTransforms = 0;
+
+	UndoTransform *self = FindOrAddTransform(transforms, &numTransforms, snapA_Inst);
+	if(self){
+		self->flags |= UNDO_TRANSFORM_POS;
+		self->newPos = newPos;
+	}
+
+	if(snapA_Inst->m_lod && !snapA_Inst->m_lod->m_isDeleted){
+		UndoTransform *lod = FindOrAddTransform(transforms, &numTransforms, snapA_Inst->m_lod);
+		if(lod){
+			lod->flags |= UNDO_TRANSFORM_POS;
+			lod->newPos = add(snapA_Inst->m_lod->m_translation, offset);
+		}
+	}
+
+	for(int i = 0; i < numTransforms; i++)
+		ApplyTransform(transforms[i]);
+	UndoRecordTransformBatch(transforms, numTransforms);
+
+	// Rebuild magnet points for the moved object
+	if(magnetInst == snapA_Inst)
+		RebuildExtremityPoints(snapA_Inst);
+
+	Toast(TOAST_SELECTION, "Snapped %s to %s", GetObjectDef(snapA_Inst->m_objectId)->m_name, GetObjectDef(snapB_Inst->m_objectId)->m_name);
+
+	snapA_Inst = nil;
+	snapA_PointIndex = -1;
+	snapB_Inst = nil;
+	snapB_PointIndex = -1;
+}
+
 void
 Draw(void)
 {
@@ -1779,6 +2021,8 @@ Draw(void)
 
 	LoadAllRequestedObjects();
 	BuildRenderList();
+
+	MagnetPickSphere();
 
 	// Has to be called for highlighting some objects
 	// but also can mess with timecycle mid frame :/
@@ -1849,6 +2093,8 @@ Draw(void)
 		Effects::Render();
 	if(WaterLevel::gWaterEditMode)
 		WaterLevel::RenderEditOverlay();
+
+	UpdateAndRenderExtremityMagnet();
 
 	rw::SetRenderState(rw::ALPHATESTFUNC, rw::ALPHAALWAYS);	// don't mess up GUI
 	// This fucks up the z buffer, but what else can we do?
