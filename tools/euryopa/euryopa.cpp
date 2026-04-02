@@ -1829,11 +1829,11 @@ MagnetPickSphere(void)
 		magnetInst = sel;
 		magnetSelectedPoint = -1;
 		magnetHoveredPoint = -1;
-		snapA_Inst = nil;
-		if(magnetInst != nil)
-			RebuildExtremityPoints(magnetInst);
-		else
+		if(magnetInst == nil){
 			magnetNumPoints = 0;
+			snapA_Inst = nil;
+		}else
+			RebuildExtremityPoints(magnetInst);
 	}
 
 	if(magnetInst == nil || magnetNumPoints == 0)
