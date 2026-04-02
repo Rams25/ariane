@@ -153,6 +153,7 @@ static bool showBrowserWindow;
 static bool showDiffWindow;
 static bool showToolsWindow = true;
 static bool showWorkspaceWindow = true;
+static bool gStaticDockLayoutEnabled = true;
 static bool gBrowserIdeListDirty = true;
 static char gIplFilterSearch[128];
 
@@ -2475,6 +2476,7 @@ uiWorkspaceWindow(void)
 		ImGui::Text("Selection: %d", selectedCount);
 		ImGui::Text("Instances: %d", instanceCount);
 		ImGui::Text("Place mode: %s", gPlaceMode ? "Enabled" : "Disabled");
+		ImGui::Checkbox("Static dock layout", &gStaticDockLayoutEnabled);
 	}
 
 	if(ImGui::CollapsingHeader("Panels", ImGuiTreeNodeFlags_DefaultOpen)){
@@ -2514,6 +2516,46 @@ uiWorkspaceWindow(void)
 	}
 
 	ImGui::End();
+}
+
+struct StaticDockLayout
+{
+	float top;
+	float pad;
+	float leftX;
+	float leftW;
+	float centerX;
+	float centerW;
+	float rightX;
+	float rightW;
+	float upperH;
+	float lowerH;
+	float viewH;
+	float viewportH;
+};
+
+static StaticDockLayout
+getStaticDockLayout(void)
+{
+	ImVec2 d = ImGui::GetIO().DisplaySize;
+	StaticDockLayout l;
+	l.top = ImGui::GetFrameHeight();
+	l.pad = 8.0f;
+	l.leftX = showWorkspaceWindow ? (332.0f + l.pad * 2.0f) : l.pad;
+	l.leftW = 360.0f;
+	l.rightW = 390.0f;
+	l.rightX = d.x - l.rightW - l.pad;
+	l.centerX = l.leftX + l.leftW + l.pad;
+	l.centerW = l.rightX - l.centerX - l.pad;
+	l.viewH = 170.0f;
+	l.lowerH = 250.0f;
+	l.upperH = (d.y - l.top - l.viewH - l.lowerH - l.pad * 5.0f) * 0.5f;
+	if(l.upperH < 180.0f)
+		l.upperH = 180.0f;
+	l.viewportH = d.y - l.top - l.lowerH - l.viewH - l.pad * 4.0f;
+	if(l.viewportH < 220.0f)
+		l.viewportH = 220.0f;
+	return l;
 }
 
 static void
@@ -5768,11 +5810,24 @@ gui(void)
 
 	if(!CPad::IsCtrlDown() && !CPad::IsShiftDown() && CPad::IsKeyJustDown('U'))
 		showWorkspaceWindow ^= 1;
-	if(showWorkspaceWindow)
+	if(showWorkspaceWindow){
+		if(gStaticDockLayoutEnabled){
+			float top = ImGui::GetFrameHeight();
+			float pad = 8.0f;
+			ImGui::SetNextWindowPos(ImVec2(pad, top + pad), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(332.0f, ImGui::GetIO().DisplaySize.y - top - pad * 2.0f), ImGuiCond_Always);
+		}
 		uiWorkspaceWindow();
+	}
+
+	StaticDockLayout dock = getStaticDockLayout();
 
 	if(CPad::IsKeyJustDown('T')) showTimeWeatherWindow ^= 1;
 	if(showTimeWeatherWindow){
+		if(gStaticDockLayoutEnabled){
+			ImGui::SetNextWindowPos(ImVec2(dock.centerX, dock.top + dock.pad), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(dock.centerW, dock.viewH), ImGuiCond_Always);
+		}
 		ImGui::Begin("Time & Weather", &showTimeWeatherWindow);
 		uiTimeWeather();
 		ImGui::End();
@@ -5780,7 +5835,12 @@ gui(void)
 
 	if(!CPad::IsCtrlDown() && CPad::IsKeyJustDown('V')) showViewWindow ^= 1;
 	if(showViewWindow){
-		ImGui::SetNextWindowSize(ImVec2(460.0f, 640.0f), ImGuiCond_FirstUseEver);
+		if(gStaticDockLayoutEnabled){
+			ImGui::SetNextWindowPos(ImVec2(dock.rightX, dock.top + dock.pad), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(dock.rightW, dock.upperH), ImGuiCond_Always);
+		}else{
+			ImGui::SetNextWindowSize(ImVec2(460.0f, 640.0f), ImGuiCond_FirstUseEver);
+		}
 		ImGui::Begin("View", &showViewWindow);
 		uiView();
 		ImGui::End();
@@ -5788,22 +5848,50 @@ gui(void)
 
 	if(!CPad::IsCtrlDown() && CPad::IsKeyJustDown('R')) showRenderingWindow ^= 1;
 	if(showRenderingWindow){
+		if(gStaticDockLayoutEnabled){
+			ImGui::SetNextWindowPos(ImVec2(dock.rightX, dock.top + dock.pad + dock.upperH + dock.pad), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(dock.rightW, dock.upperH), ImGuiCond_Always);
+		}
 		ImGui::Begin("Rendering", &showRenderingWindow);
 		uiRendering();
 		ImGui::End();
 	}
 
 	if(CPad::IsKeyJustDown('X')) showToolsWindow ^= 1;
-	if(showToolsWindow) uiToolsWindow();
+	if(showToolsWindow){
+		if(gStaticDockLayoutEnabled){
+			ImGui::SetNextWindowPos(ImVec2(dock.rightX, dock.top + dock.pad + dock.upperH * 2.0f + dock.pad * 2.0f), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(dock.rightW, dock.lowerH), ImGuiCond_Always);
+		}
+		uiToolsWindow();
+	}
 
 	if(!CPad::IsCtrlDown() && !CPad::IsShiftDown() && CPad::IsKeyJustDown('I')) showInstanceWindow ^= 1;
-	if(showInstanceWindow) uiInstWindow();
+	if(showInstanceWindow){
+		if(gStaticDockLayoutEnabled){
+			ImGui::SetNextWindowPos(ImVec2(dock.leftX, dock.top + dock.pad + dock.viewH + dock.pad + dock.viewportH + dock.pad), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(dock.leftW, dock.lowerH), ImGuiCond_Always);
+		}
+		uiInstWindow();
+	}
 
 	if(!CPad::IsCtrlDown() && !CPad::IsShiftDown() && CPad::IsKeyJustDown('E')) showEditorWindow ^= 1;
-	if(showEditorWindow) uiEditorWindow();
+	if(showEditorWindow){
+		if(gStaticDockLayoutEnabled){
+			ImGui::SetNextWindowPos(ImVec2(dock.leftX, dock.top + dock.pad + dock.viewH + dock.pad), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(dock.leftW, dock.viewportH), ImGuiCond_Always);
+		}
+		uiEditorWindow();
+	}
 
 	if(!CPad::IsCtrlDown() && CPad::IsKeyJustDown('F')) showDiffWindow ^= 1;
-	if(showDiffWindow) uiDiffWindow();
+	if(showDiffWindow){
+		if(gStaticDockLayoutEnabled){
+			ImGui::SetNextWindowPos(ImVec2(dock.centerX, dock.top + dock.pad + dock.viewH + dock.pad + dock.viewportH + dock.pad), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(dock.centerW, dock.lowerH), ImGuiCond_Always);
+		}
+		uiDiffWindow();
+	}
 
 	if(CPad::IsKeyJustDown('B')){
 		showBrowserWindow ^= 1;
@@ -5811,6 +5899,10 @@ gui(void)
 			SpawnExitPlaceMode();
 	}
 	if(showBrowserWindow){
+		if(gStaticDockLayoutEnabled){
+			ImGui::SetNextWindowPos(ImVec2(dock.leftX, dock.top + dock.pad), ImGuiCond_Always);
+			ImGui::SetNextWindowSize(ImVec2(dock.leftW, dock.viewH + dock.viewportH), ImGuiCond_Always);
+		}
 		uiBrowserWindow();
 		// ImGui X button can set showBrowserWindow to false
 		if(!showBrowserWindow && gPlaceMode)
