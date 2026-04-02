@@ -35,8 +35,12 @@ static int magnetSelectedPoint = -1;
 // Extremity Snap state
 static ObjectInst *snapA_Inst = nil;
 static rw::V3d snapA_WorldPos;
+static rw::V3d snapA_LocalPos;
 static ObjectInst *snapB_Inst = nil;
 static rw::V3d snapB_WorldPos;
+static rw::V3d magnetLastPos;
+static rw::Quat magnetLastRot;
+static bool magnetHasLastTransform = false;
 
 int gameTxdSlot;
 
@@ -1758,6 +1762,37 @@ MagnetPointExists(rw::V3d *pts, int num, rw::V3d p)
 	return false;
 }
 
+static bool
+MagnetTransformChanged(ObjectInst *inst)
+{
+	if(inst == nil)
+		return false;
+	if(!magnetHasLastTransform)
+		return true;
+	rw::V3d d = sub(inst->m_translation, magnetLastPos);
+	float posEps2 = 1.0e-8f;
+	float rotEps = 1.0e-6f;
+	if(d.x*d.x + d.y*d.y + d.z*d.z > posEps2)
+		return true;
+	if(fabsf(inst->m_rotation.x - magnetLastRot.x) > rotEps) return true;
+	if(fabsf(inst->m_rotation.y - magnetLastRot.y) > rotEps) return true;
+	if(fabsf(inst->m_rotation.z - magnetLastRot.z) > rotEps) return true;
+	if(fabsf(inst->m_rotation.w - magnetLastRot.w) > rotEps) return true;
+	return false;
+}
+
+static void
+RememberMagnetTransform(ObjectInst *inst)
+{
+	if(inst == nil){
+		magnetHasLastTransform = false;
+		return;
+	}
+	magnetLastPos = inst->m_translation;
+	magnetLastRot = inst->m_rotation;
+	magnetHasLastTransform = true;
+}
+
 static void
 RebuildExtremityPoints(ObjectInst *inst)
 {
@@ -1832,9 +1867,17 @@ MagnetPickSphere(void)
 		if(magnetInst == nil){
 			magnetNumPoints = 0;
 			snapA_Inst = nil;
+			RememberMagnetTransform(nil);
 		}else
 			RebuildExtremityPoints(magnetInst);
+		RememberMagnetTransform(magnetInst);
+	}else if(magnetInst && MagnetTransformChanged(magnetInst)){
+		RebuildExtremityPoints(magnetInst);
+		RememberMagnetTransform(magnetInst);
 	}
+
+	if(snapA_Inst && snapA_Inst->m_isDeleted)
+		snapA_Inst = nil;
 
 	if(magnetInst == nil || magnetNumPoints == 0)
 		return;
@@ -1903,6 +1946,9 @@ SelectExtremityToSnap(void)
 	}
 	snapA_Inst = magnetInst;
 	snapA_WorldPos = magnetPoints[magnetSelectedPoint];
+	rw::Matrix invMat;
+	rw::Matrix::invert(&invMat, &snapA_Inst->m_matrix);
+	rw::V3d::transformPoints(&snapA_LocalPos, &snapA_WorldPos, 1, &invMat);
 	Toast(TOAST_SELECTION, "Extremity A set on %s", GetObjectDef(snapA_Inst->m_objectId)->m_name);
 }
 
@@ -1911,6 +1957,11 @@ SnapExtremity(void)
 {
 	if(snapA_Inst == nil){
 		Toast(TOAST_SELECTION, "Please use 'Select Extremity to Snap' first");
+		return;
+	}
+	if(snapA_Inst->m_isDeleted){
+		snapA_Inst = nil;
+		Toast(TOAST_SELECTION, "Source object no longer exists");
 		return;
 	}
 	if(magnetSelectedPoint < 0 || magnetInst == nil){
@@ -1924,6 +1975,7 @@ SnapExtremity(void)
 
 	snapB_Inst = magnetInst;
 	snapB_WorldPos = magnetPoints[magnetSelectedPoint];
+	rw::V3d::transformPoints(&snapA_WorldPos, &snapA_LocalPos, 1, &snapA_Inst->m_matrix);
 
 	rw::V3d offset = sub(snapB_WorldPos, snapA_WorldPos);
 	rw::V3d newPos = add(snapA_Inst->m_translation, offset);
