@@ -4598,6 +4598,9 @@ uiSwapBuildingPopup(ObjectInst *inst)
 				bool canImportSwap = haveDff && haveTxd && gCustomImport.modelName[0] != '\0';
 				if(!canImportSwap) ImGui::BeginDisabled();
 				if(ImGui::Button("Import & Swap")){
+					// Ensure a free object ID is assigned
+					if(gCustomImport.objectId == 0)
+						gCustomImport.objectId = findSuggestedCustomImportId();
 					// Run the full custom import (creates ObjectDef + spawns instance)
 					if(finalizeCustomImport()){
 						// The spawned instance is the last one we don't need
