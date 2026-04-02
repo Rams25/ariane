@@ -2543,6 +2543,287 @@ uiImportPrefabPopup(void)
 	}
 }
 
+// Like finalizeCustomImport but doesn't spawn an instance.
+// Returns the new ObjectDef on success, nil on error (check gCustomImport.error).
+static ObjectDef*
+prepareCustomImportObjectDef(void)
+{
+	gCustomImport.error[0] = '\0';
+	gCustomImport.warning[0] = '\0';
+
+	if(!isSA()){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error),
+		         "Custom import is wired for GTA San Andreas only in this v1.");
+		return nil;
+	}
+	if(gCustomImport.objectId < 0){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error), "No free stock-range ID was found.");
+		return nil;
+	}
+	if(gCustomImport.objectId == 0)
+		gCustomImport.objectId = findSuggestedCustomImportId();
+	if(GetObjectDef(gCustomImport.objectId)){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error), "ID %d is already in use.", gCustomImport.objectId);
+		return nil;
+	}
+	if(hasInvalidModelTokenChars(gCustomImport.modelName) || hasInvalidModelTokenChars(gCustomImport.txdName)){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error),
+		         "Model/TXD names must use only letters, digits, and underscores.");
+		return nil;
+	}
+	if(GetObjectDef(gCustomImport.modelName, nil)){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error),
+		         "Model name %s already exists. Change the model name first.", gCustomImport.modelName);
+		return nil;
+	}
+	if(FindTxdSlot(gCustomImport.txdName) >= 0){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error),
+		         "TXD name %s already exists. Change the TXD name first.", gCustomImport.txdName);
+		return nil;
+	}
+	if(strlen(gCustomImport.modelName) >= 24){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error),
+		         "Model name %s is too long for COL internal name/export (max 23 chars).", gCustomImport.modelName);
+		return nil;
+	}
+
+	char dffLogical[256], txdLogical[256], colLogical[256];
+	char dffTarget[1024], txdTarget[1024], colTarget[1024];
+	char manifestPath[1024], iplPath[1024];
+	if(!buildCustomImportModelLogicalPath(dffLogical, sizeof(dffLogical), gCustomImport.modelName, "dff") ||
+	   !buildCustomImportModelLogicalPath(txdLogical, sizeof(txdLogical), gCustomImport.txdName, "txd") ||
+	   !buildCustomImportColLogicalPath(colLogical, sizeof(colLogical), gCustomImport.modelName) ||
+	   !BuildModloaderLogicalExportPath(CUSTOM_IMPORT_MANIFEST_LOGICAL_PATH, manifestPath, sizeof(manifestPath)) ||
+	   !BuildModloaderLogicalExportPath(CUSTOM_IMPORT_IPL_LOGICAL_PATH, iplPath, sizeof(iplPath)) ||
+	   !BuildModloaderLogicalExportPath(dffLogical, dffTarget, sizeof(dffTarget)) ||
+	   !BuildModloaderLogicalExportPath(txdLogical, txdTarget, sizeof(txdTarget)) ||
+	   !BuildModloaderLogicalExportPath(colLogical, colTarget, sizeof(colTarget))){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error), "Couldn't build export paths.");
+		return nil;
+	}
+
+	bool importCol = gCustomImport.hasCol;
+	std::vector<FileRollbackEntry> rollbackEntries;
+	if(importCol){
+		int colEntryCount = 0;
+		bool colAllMatch = false;
+		bool colNeedsRename = false;
+		if(!inspectColFileForImport(gCustomImport.colSource, &colEntryCount, &colAllMatch,
+		                            &colNeedsRename, gCustomImport.modelName)){
+			snprintf(gCustomImport.error, sizeof(gCustomImport.error), "Couldn't parse COL file %s.", gCustomImport.colSource);
+			return nil;
+		}
+		if(colEntryCount != 1 && !colAllMatch){
+			snprintf(gCustomImport.error, sizeof(gCustomImport.error),
+			         "COL import only supports automatic renaming for single-entry COL files.");
+			return nil;
+		}
+	}
+
+	if(!captureRollbackEntry(rollbackEntries, dffTarget) ||
+	   !captureRollbackEntry(rollbackEntries, txdTarget) ||
+	   !captureRollbackEntry(rollbackEntries, manifestPath) ||
+	   !captureRollbackEntry(rollbackEntries, iplPath) ||
+	   !captureRollbackEntry(rollbackEntries, colTarget)){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error), "Couldn't snapshot files for rollback.");
+		return nil;
+	}
+
+	char idePath[1024];
+	if(!BuildModloaderLogicalExportPath(CUSTOM_IMPORT_IDE_LOGICAL_PATH, idePath, sizeof(idePath))){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error), "Failed to resolve custom IDE path.");
+		return nil;
+	}
+	if(!captureRollbackEntry(rollbackEntries, idePath)){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error), "Couldn't snapshot files for rollback.");
+		return nil;
+	}
+
+	if(!copyFileExact(gCustomImport.dffSource, dffTarget) ||
+	   !copyFileExact(gCustomImport.txdSource, txdTarget)){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error), "Failed to copy one or more source files.");
+		rollbackTouchedFiles(rollbackEntries);
+		ModloaderInit();
+		return nil;
+	}
+
+	ModloaderInit();
+	const char *winningDff = ModloaderFindOverride(gCustomImport.modelName, "dff");
+	const char *winningTxd = ModloaderFindOverride(gCustomImport.txdName, "txd");
+	if(winningDff == nil || !pathsEqualCiNormalized(winningDff, dffTarget) ||
+	   winningTxd == nil || !pathsEqualCiNormalized(winningTxd, txdTarget)){
+		rollbackTouchedFiles(rollbackEntries);
+		ModloaderInit();
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error),
+		         "Import is shadowed before Ariane wins override resolution.");
+		return nil;
+	}
+
+	if(!ensureTextFileExists(iplPath, "inst\nend\n") ||
+	   (importCol && !copyColWithInternalRename(gCustomImport.colSource, colTarget, gCustomImport.modelName))){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error), "Failed to prepare custom import files.");
+		rollbackTouchedFiles(rollbackEntries);
+		ModloaderInit();
+		return nil;
+	}
+
+	// Read existing IDE and add entry
+	std::vector<std::string> lines;
+	FILE *ide = fopen(idePath, "r");
+	if(ide){
+		char line[512];
+		while(fgets(line, sizeof(line), ide)){
+			trimLineEnding(line);
+			lines.push_back(line);
+		}
+		fclose(ide);
+	}
+	bool inserted = false;
+	char ideEntry[512];
+	gCustomImport.previewObj.m_drawDist[0] = gCustomImport.drawDist;
+	int ideFlags = computeFlagsFromObjectDef(&gCustomImport.previewObj);
+	snprintf(ideEntry, sizeof(ideEntry), "%d, %s, %s, %.1f, %d",
+	         gCustomImport.objectId, gCustomImport.modelName, gCustomImport.txdName,
+	         gCustomImport.drawDist, ideFlags);
+	for(size_t i = 0; i < lines.size(); i++){
+		if(strcmp(lines[i].c_str(), ideEntry) == 0){
+			inserted = true;
+			break;
+		}
+		if(strcmp(lines[i].c_str(), "end") == 0){
+			lines.insert(lines.begin() + (long)i, ideEntry);
+			inserted = true;
+			break;
+		}
+	}
+	if(!inserted){
+		lines.push_back("objs");
+		lines.push_back(ideEntry);
+		lines.push_back("end");
+	}
+	ide = fopen(idePath, "w");
+	if(ide == nil){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error), "Couldn't rewrite %s", idePath);
+		rollbackTouchedFiles(rollbackEntries);
+		ModloaderInit();
+		return nil;
+	}
+	for(size_t i = 0; i < lines.size(); i++)
+		fprintf(ide, "%s\n", lines[i].c_str());
+	fclose(ide);
+
+	ObjectDef *obj = AddObjectDef(gCustomImport.objectId);
+	if(obj == nil){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error), "Failed to allocate custom object.");
+		rollbackTouchedFiles(rollbackEntries);
+		ModloaderInit();
+		return nil;
+	}
+	int createdTxdSlot = -1;
+	auto rollbackRegisteredState = [&](){
+		RemoveObjectDef(gCustomImport.objectId);
+		if(createdTxdSlot >= 0)
+			RemoveTxdSlot(createdTxdSlot);
+	};
+	obj->m_type = ObjectDef::ATOMIC;
+	strncpy(obj->m_name, gCustomImport.modelName, MODELNAMELEN);
+	obj->m_name[MODELNAMELEN-1] = '\0';
+	obj->m_txdSlot = AddTxdSlot(gCustomImport.txdName);
+	createdTxdSlot = obj->m_txdSlot;
+	obj->m_numAtomics = 1;
+	obj->m_drawDist[0] = gCustomImport.drawDist;
+	obj->SetFlags(ideFlags);
+	obj->m_isTimed = false;
+	obj->m_file = getOrCreateCustomImportGameFile(&gCustomImportIdeFile, CUSTOM_IMPORT_IDE_LOGICAL_PATH);
+	obj->SetupBigBuilding(gCustomImport.objectId, gCustomImport.objectId + 1);
+
+	RequestObject(gCustomImport.objectId);
+	LoadAllRequestedObjects();
+	if(obj->m_atomics[0] == nil){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error),
+		         "Failed to load imported DFF/TXD for %s.", gCustomImport.modelName);
+		rollbackRegisteredState();
+		rollbackTouchedFiles(rollbackEntries);
+		ModloaderInit();
+		return nil;
+	}
+
+	if(!importCol){
+		AutoColStats stats = {};
+		std::vector<char> generatedCol;
+		char autoColError[256];
+		autoColError[0] = '\0';
+		if(!GenerateCol3FromAtomic(obj->m_atomics[0], gCustomImport.modelName, generatedCol, &stats,
+		                           autoColError, sizeof(autoColError)) ||
+		   !writeFileExact(colTarget, generatedCol.data(), generatedCol.size())){
+			snprintf(gCustomImport.error, sizeof(gCustomImport.error), "%s",
+			         autoColError[0] ? autoColError : "Failed to auto-generate COL from DFF geometry.");
+			rollbackRegisteredState();
+			rollbackTouchedFiles(rollbackEntries);
+			ModloaderInit();
+			return nil;
+		}
+		int removedTriangles = stats.removedDuplicateIndexTriangles +
+		                      stats.removedZeroAreaTriangles +
+		                      stats.removedCollinearTriangles;
+		if(stats.exceededSoftTriangleThreshold || removedTriangles > 0){
+			snprintf(gCustomImport.warning, sizeof(gCustomImport.warning),
+			         "Auto-generated COL from DFF geometry (%d -> %d tris, %d -> %d verts).",
+			         stats.originalTriangles, stats.finalTriangles,
+			         stats.originalVertices, stats.finalVertices);
+		}
+	}
+
+	char manifestLine[512];
+	snprintf(manifestLine, sizeof(manifestLine), "IDE %s", CUSTOM_IMPORT_IDE_LOGICAL_PATH);
+	if(!appendUniqueLine(manifestPath, manifestLine)){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error), "Failed to update %s", manifestPath);
+		rollbackRegisteredState();
+		rollbackTouchedFiles(rollbackEntries);
+		ModloaderInit();
+		return nil;
+	}
+	snprintf(manifestLine, sizeof(manifestLine), "IPL %s", CUSTOM_IMPORT_IPL_LOGICAL_PATH);
+	if(!appendUniqueLine(manifestPath, manifestLine)){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error), "Failed to update %s", manifestPath);
+		rollbackRegisteredState();
+		rollbackTouchedFiles(rollbackEntries);
+		ModloaderInit();
+		return nil;
+	}
+	snprintf(manifestLine, sizeof(manifestLine), "COLFILE 0 %s", colLogical);
+	if(!appendUniqueLine(manifestPath, manifestLine)){
+		snprintf(gCustomImport.error, sizeof(gCustomImport.error), "Failed to register COLFILE addition.");
+		rollbackRegisteredState();
+		rollbackTouchedFiles(rollbackEntries);
+		ModloaderInit();
+		return nil;
+	}
+
+	ModloaderInit();
+
+	{
+		char mutableColPath[256];
+		strncpy(mutableColPath, colLogical, sizeof(mutableColPath)-1);
+		mutableColPath[sizeof(mutableColPath)-1] = '\0';
+		GameFile *prevFile = FileLoader::currentFile;
+		FileLoader::currentFile = NewGameFile(mutableColPath);
+		FileLoader::LoadCollisionFile(colLogical);
+		FileLoader::currentFile = prevFile;
+		if(obj->m_colModel == nil && !importCol){
+			snprintf(gCustomImport.error, sizeof(gCustomImport.error),
+			         "Auto-generated COL did not attach to model name %s.", gCustomImport.modelName);
+			rollbackRegisteredState();
+			rollbackTouchedFiles(rollbackEntries);
+			ModloaderInit();
+			return nil;
+		}
+	}
+
+	gBrowserIdeListDirty = true;
+	return obj;
+}
+
 static bool
 finalizeCustomImport(void)
 {
@@ -4598,29 +4879,13 @@ uiSwapBuildingPopup(ObjectInst *inst)
 				bool canImportSwap = haveDff && haveTxd && gCustomImport.modelName[0] != '\0';
 				if(!canImportSwap) ImGui::BeginDisabled();
 				if(ImGui::Button("Import & Swap")){
-					// Ensure a free object ID is assigned
-					if(gCustomImport.objectId == 0)
-						gCustomImport.objectId = findSuggestedCustomImportId();
-					// Run the full custom import (creates ObjectDef + spawns instance)
-					if(finalizeCustomImport()){
-						// The spawned instance is the last one we don't need
-						// Find and delete it
-						int newId = gCustomImport.objectId;
-						ObjectInst *spawned = nil;
-						for(CPtrNode *p = instances.first; p; p = p->next){
-							ObjectInst *si = (ObjectInst*)p->item;
-							if(si->m_objectId == newId && si != inst && !si->m_isDeleted)
-								spawned = si;
-						}
-						if(spawned){
-							spawned->Deselect();
-							spawned->Delete();
-						}
-						// Now swap the target instance
+					ObjectDef *newObj = prepareCustomImportObjectDef();
+					if(newObj){
 						int oldId = inst->m_objectId;
+						int newId = newObj->m_id;
 						if(SwapInstanceModel(inst, newId)){
 							UndoRecordSwap(inst, oldId, newId);
-							Toast(TOAST_SELECTION, "Swapped to %s", GetObjectDef(newId)->m_name);
+							Toast(TOAST_SELECTION, "Swapped to %s", newObj->m_name);
 						}
 						// Reset import state for next use
 						gCustomImport.dffSource[0] = '\0';
