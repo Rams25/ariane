@@ -25,8 +25,6 @@ ApplyWorkspaceTheme(void)
 	ImGuiIO &io = ImGui::GetIO();
 
 	io.ConfigWindowsMoveFromTitleBarOnly = true;
-	io.ConfigDockingAlwaysTabBar = true;
-	io.ConfigDockingTransparentPayload = true;
 
 	// Geometry
 	style.WindowRounding = 6.0f;
@@ -100,8 +98,6 @@ ApplyWorkspaceTheme(void)
 	colors[ImGuiCol_TabSelected]         = ImVec4(0.216f, 0.216f, 0.216f, 1.00f);
 	colors[ImGuiCol_TabDimmed]           = ImVec4(0.137f, 0.137f, 0.137f, 1.00f);
 	colors[ImGuiCol_TabDimmedSelected]   = ImVec4(0.216f, 0.216f, 0.216f, 1.00f);
-	colors[ImGuiCol_DockingPreview]      = ImVec4(0.290f, 0.565f, 0.863f, 0.70f);
-	colors[ImGuiCol_DockingEmptyBg]      = ImVec4(0.110f, 0.110f, 0.110f, 1.00f);
 
 	// Sliders / grabs
 	colors[ImGuiCol_SliderGrab]          = ImVec4(0.392f, 0.392f, 0.392f, 1.00f);
